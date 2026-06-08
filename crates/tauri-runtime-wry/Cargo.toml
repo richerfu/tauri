@@ -18,7 +18,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 wry = { git = "https://github.com/richerfu/wry", default-features = false, features = [
-  "drag-drop",
   "protocol",
   "os-webview",
   "linux-body",
