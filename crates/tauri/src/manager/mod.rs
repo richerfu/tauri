@@ -472,6 +472,49 @@ impl<R: Runtime> AppManager<R> {
     (self.webview.invoke_handler)(invoke)
   }
 
+  #[cfg(target_env = "ohos")]
+  pub fn extend_api(self: &Arc<Self>, plugin: &str, invoke: Invoke<R>) -> bool {
+    // try_lock fast path first: when the plugin store lock is free (the common
+    // case), run the command SYNCHRONOUSLY on the calling thread (the OHOS main
+    // thread, where `on_message` dispatches IPC). Plugin resolve/reject then
+    // drives the response `webview.eval` from that same main thread — required
+    // by ArkWeb's main-thread affinity. Only on actual lock contention do we
+    // offload to `spawn_blocking` so the main thread never blocks on the lock
+    // (appfreeze safeguard), trading away main-thread eval affinity in that
+    // rare path. See openspec/changes/p1-invoke-appfreeze/design.md Decision 2.
+    match self.plugins.try_lock() {
+      Ok(mut store) => store.extend_api(plugin, invoke),
+      Err(_) => {
+        // Plugin store lock contention -> offload to the tokio blocking pool;
+        // the main thread returns immediately and the command is not lost.
+        // Clone what the mobile Channel fallback needs before `invoke` is
+        // moved into the task: when the plugin does not handle the command
+        // there, the fallback must still run or the JS promise hangs forever.
+        let this = self.clone();
+        let plugin_owned = plugin.to_owned();
+        let app_handle = invoke.message.webview.app_handle.clone();
+        let message = invoke.message.clone();
+        let resolver = invoke.resolver.clone();
+        crate::async_runtime::spawn_blocking(move || {
+          let handled = this
+            .plugins
+            .lock()
+            .expect("poisoned plugin store")
+            .extend_api(&plugin_owned, invoke);
+          if !handled {
+            crate::plugin::mobile::run_mobile_channel_fallback(
+              &plugin_owned,
+              &app_handle,
+              message,
+              &resolver,
+            );
+          }
+        });
+        true
+      }
+    }
+  }
+  #[cfg(not(target_env = "ohos"))]
   pub fn extend_api(&self, plugin: &str, invoke: Invoke<R>) -> bool {
     self
       .plugins
@@ -481,6 +524,33 @@ impl<R: Runtime> AppManager<R> {
   }
 
   pub fn initialize_plugins(&self, app: &AppHandle<R>) -> crate::Result<()> {
+    // OHOS: a plugin's initialize may round-trip the ArkTS bridge, which pumps
+    // the event loop — the plugins lock must not be held across it, or the
+    // re-entrant on_event_loop_event / extend_api paths deadlock against it.
+    // Take the plugins out under a short lock, initialize each one outside,
+    // and re-register under a short lock (same discipline as plugin_boxed).
+    // Non-OHOS keeps the upstream in-lock initialization.
+    #[cfg(target_env = "ohos")]
+    {
+      let plugins = self
+        .plugins
+        .lock()
+        .expect("poisoned plugin store")
+        .take_all();
+      let mut result = Ok(());
+      for mut plugin in plugins {
+        if result.is_ok() {
+          result = crate::plugin::initialize(&mut plugin, app, &self.config.plugins);
+        }
+        self
+          .plugins
+          .lock()
+          .expect("poisoned plugin store")
+          .register(plugin);
+      }
+      result
+    }
+    #[cfg(not(target_env = "ohos"))]
     self
       .plugins
       .lock()
@@ -710,13 +780,13 @@ mod tests {
 
   #[test]
   fn string_replace_with_callback() {
-    let mut tauri_index = 0;
+    let mut tauri_index = 0i32;
     #[allow(clippy::single_element_loop)]
     for (src, pattern, replacement, result) in [(
       "tauri is awesome, tauri is amazing",
       "tauri",
       || {
-        tauri_index += 1;
+        tauri_index += 1i32;
         tauri_index.to_string()
       },
       "1 is awesome, 2 is amazing",
@@ -726,7 +796,7 @@ mod tests {
   }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_env = "ohos")))]
 mod test {
   use std::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -823,7 +893,7 @@ mod test {
     let webview = window
       .add_child(
         WebviewBuilder::new("main-webview", Default::default()),
-        crate::LogicalPosition::new(0, 0),
+        crate::LogicalPosition::new(0i32, 0i32),
         window.inner_size().unwrap(),
       )
       .unwrap();

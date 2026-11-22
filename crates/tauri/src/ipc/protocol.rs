@@ -151,6 +151,15 @@ pub fn get<R: Runtime>(manager: Arc<AppManager<R>>) -> UriSchemeProtocolHandler 
             }
           }
         } else {
+          #[cfg(target_env = "ohos")]
+          {
+            let all_labels: Vec<String> = manager.webviews().keys().cloned().collect();
+            log::warn!(
+              "[IPC] failed to acquire webview reference: label={:?}, known_labels={:?}",
+              label,
+              all_labels
+            );
+          }
           respond(
             http::Response::builder()
               .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -295,11 +304,22 @@ fn handle_ipc_message<R: Runtime>(request: Request<String>, manager: &AppManager
       Ok(message) => {
         let options = message.options.unwrap_or_default();
 
+        let uri = request.uri().to_string();
+        #[cfg(target_env = "ohos")]
+        let url = if uri == "/" {
+          webview
+            .url()
+            .unwrap_or_else(|_| "about:blank".parse().unwrap())
+        } else {
+          Url::parse(&uri).expect("invalid IPC request URL")
+        };
+        #[cfg(not(target_env = "ohos"))]
+        let url = Url::parse(&uri).expect("invalid IPC request URL");
         let request = InvokeRequest {
           cmd: message.cmd,
           callback: message.callback,
           error: message.error,
-          url: Url::parse(&request.uri().to_string()).expect("invalid IPC request URL"),
+          url,
           body: message.payload.into(),
           headers: options.headers.0,
           invoke_key: message.invoke_key,
@@ -549,7 +569,7 @@ fn parse_invoke_request<R: Runtime>(
   Ok(payload)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_env = "ohos")))]
 mod tests {
   use std::str::FromStr;
 
@@ -623,7 +643,7 @@ mod tests {
     assert_eq!(invoke_request.body, InvokeBody::Raw(body));
 
     let body = json!({
-      "key": 1,
+      "key": 1i32,
       "anotherKey": "asda",
     });
 
@@ -667,7 +687,7 @@ mod tests {
     });
 
     let body_json = json!({
-      "key": 1,
+      "key": 1i32,
       "anotherKey": "string"
     });
     let body_bytes = crypto_keys

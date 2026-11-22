@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use super::{build_var, cfg_alias};
+use super::build_var;
 
 #[cfg(target_os = "macos")]
 pub fn update_entitlements<F: FnOnce(&mut plist::Dictionary)>(f: F) -> Result<()> {
@@ -52,14 +52,80 @@ pub fn update_android_manifest(block_identifier: &str, parent: &str, insert: Str
   tauri_utils::build::update_android_manifest(block_identifier, parent, insert)
 }
 
+/// Updates the OHOS module.json5 by appending deep-link skill objects to abilities[0].skills.
+///
+/// Reads `TAURI_OHOS_PROJECT_PATH` to locate the OHOS project directory (set by tauri-cli).
+/// Self-gating is via `CARGO_CFG_TARGET_ENV == "ohos"` (cross-compilation safe).
+/// Locates `entry_{OHOS_DEVICE_TYPE}/src/main/module.json5`. Uses json5 parse/serialize.
+/// Idempotent: removes existing deep-link skills (by `ohos.want.action.viewData` signature)
+/// before re-injecting, so repeated builds don't accumulate. Home entry skill is preserved.
+///
+/// Limitations:
+/// - Only `abilities[0]` is injected (single-ability Tauri OHOS apps; multi-ability projects
+///   would need to target the entry ability by name).
+/// - Output is serialized as strict JSON (`serde_json::to_string_pretty`); JSON5-only features
+///   in the template (comments, trailing commas, unquoted keys) are lost on round-trip.
+pub fn update_ohos_module_json(skills: serde_json::Value) -> Result<()> {
+  // Gate 1: only run on OHOS builds. CARGO_CFG_TARGET_ENV is set by Cargo for build scripts,
+  // reflecting the cross-compilation target (not the host).
+  if std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() != "ohos" {
+    return Ok(());
+  }
+  // Gate 2: TAURI_OHOS_PROJECT_PATH is set by tauri-cli (mod.rs:191) for OHOS builds.
+  // If unset (e.g. build-ohos.sh without tauri-cli), no-op gracefully.
+  let Some(project_path) = std::env::var_os("TAURI_OHOS_PROJECT_PATH") else {
+    return Ok(());
+  };
+  println!("cargo:rerun-if-env-changed=TAURI_OHOS_PROJECT_PATH");
+  let device_type = std::env::var("OHOS_DEVICE_TYPE").unwrap_or_else(|_| "mobile".to_string());
+  let module_json = PathBuf::from(project_path)
+    .join(format!("entry_{device_type}"))
+    .join("src/main/module.json5");
+  if !module_json.exists() {
+    return Ok(());
+  }
+  let content = std::fs::read_to_string(&module_json)?;
+  let mut json: serde_json::Value = json5::from_str(&content)?;
+  if let Some(abilities) = json
+    .get_mut("module")
+    .and_then(|m| m.get_mut("abilities"))
+    .and_then(|a| a.as_array_mut())
+  {
+    if let Some(first_ability) = abilities.get_mut(0) {
+      // ensure the ability has a `skills` array; initialize an empty one if missing
+      // so deep-link skills are always injected (avoid silent skip on custom templates)
+      if let Some(obj) = first_ability.as_object_mut() {
+        let skills_arr = obj
+          .entry("skills")
+          .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if let Some(skills_arr) = skills_arr.as_array_mut() {
+          // idempotent: remove existing deep-link skills (actions contains ohos.want.action.viewData)
+          skills_arr.retain(|s| {
+            !s.get("actions")
+              .and_then(|a| a.as_array())
+              .map(|a| a.iter().any(|v| v == "ohos.want.action.viewData"))
+              .unwrap_or(false)
+          });
+          // append new skills
+          if let Some(new_skills) = skills.as_array() {
+            skills_arr.extend(new_skills.iter().cloned());
+          }
+        }
+      }
+    }
+  }
+  let serialized = serde_json::to_string_pretty(&json)?;
+  std::fs::write(&module_json, serialized)?;
+  Ok(())
+}
+
 pub(crate) fn setup(
   android_path: Option<PathBuf>,
   #[allow(unused_variables)] ios_path: Option<PathBuf>,
+  #[allow(unused_variables)] ohos_path: Option<PathBuf>,
 ) -> Result<()> {
-  let target_os = build_var("CARGO_CFG_TARGET_OS")?;
-  let mobile = target_os == "android" || target_os == "ios";
-  cfg_alias("mobile", mobile);
-  cfg_alias("desktop", !mobile);
+  let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+  super::cfg_aliases();
 
   match target_os.as_str() {
     "android" => {
@@ -105,7 +171,28 @@ pub(crate) fn setup(
         );
       }
     }
-    _ => (),
+    _ => {
+      if std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() == "ohos" {
+        if let Some(path) = ohos_path {
+          let manifest_dir = build_var("CARGO_MANIFEST_DIR").map(PathBuf::from)?;
+          let source = manifest_dir.join(path);
+
+          let tauri_library_path = std::env::var("DEP_TAURI_OHOS_LIBRARY_PATH")
+            .expect("missing `DEP_TAURI_OHOS_LIBRARY_PATH` environment variable. Make sure `tauri` is a dependency of the plugin.");
+          println!("cargo:rerun-if-env-changed=DEP_TAURI_OHOS_LIBRARY_PATH");
+
+          create_dir_all(source.join(".tauri")).context("failed to create .tauri directory")?;
+          copy_folder(
+            Path::new(&tauri_library_path),
+            &source.join(".tauri").join("tauri-api"),
+            &[],
+          )
+          .context("failed to copy tauri-api to the plugin project")?;
+
+          println!("cargo:ohos_library_path={}", source.display());
+        }
+      }
+    }
   }
 
   Ok(())

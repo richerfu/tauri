@@ -223,6 +223,7 @@ const PLUGINS: &[(&str, &[(&str, bool)])] = &[
       ("set_temp_dir_path", true),
       ("set_icon_as_template", true),
       ("set_show_menu_on_left_click", true),
+      ("set_quick_operation", true),
     ],
   ),
 ];
@@ -260,7 +261,9 @@ fn main() {
   println!("cargo:dev={dev}");
 
   let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-  let mobile = target_os == "ios" || target_os == "android";
+
+  let mobile = tauri_utils::platform::is_mobile_target();
+
   alias("desktop", !mobile);
   alias("mobile", mobile);
 
@@ -335,6 +338,12 @@ fn main() {
     let lib_path =
       PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("mobile/android");
     println!("cargo:android_library_path={}", lib_path.display());
+  }
+
+  if Ok("ohos") == target_env.as_deref() {
+    let lib_path =
+      PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("mobile/ohos");
+    println!("cargo:ohos_library_path={}", lib_path.display());
   }
 
   #[cfg(target_os = "macos")]

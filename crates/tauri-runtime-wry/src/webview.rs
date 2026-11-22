@@ -2,15 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-#[cfg(any(
-  target_os = "linux",
-  target_os = "dragonfly",
-  target_os = "freebsd",
-  target_os = "netbsd",
-  target_os = "openbsd"
+#[cfg(all(
+  any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+  ),
+  not(target_env = "ohos")
 ))]
 mod imp {
   pub type Webview = webkit2gtk::WebView;
+}
+
+#[cfg(target_env = "ohos")]
+mod imp {
+  use wry::OhosWebviewHandle;
+  pub type Webview = OhosWebviewHandle;
 }
 
 #[cfg(target_vendor = "apple")]
@@ -32,8 +41,11 @@ mod imp {
   use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Controller, ICoreWebView2Environment,
   };
+  /// The Windows implementation of the platform webview handle.
   pub struct Webview {
+    /// The WebView2 controller backing this webview.
     pub controller: ICoreWebView2Controller,
+    /// The WebView2 environment used to create this webview.
     pub environment: ICoreWebView2Environment,
   }
 }

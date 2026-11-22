@@ -422,6 +422,7 @@ impl Attributes {
   }
 }
 
+/// Returns `true` if the current build is a dev build (as instructed by the tauri cargo dependency hook).
 pub fn is_dev() -> bool {
   env::var_os("DEP_TAURI_DEV")
     .expect("missing `cargo:dev` instruction, please update tauri to latest")
@@ -469,10 +470,15 @@ pub fn build() {
 pub fn try_build(attributes: Attributes) -> Result<()> {
   use anyhow::anyhow;
 
-  println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+  let target_env = env::var_os("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
-  let target_os = env::var_os("CARGO_CFG_TARGET_OS").unwrap();
-  let mobile = target_os == "ios" || target_os == "android";
+  if target_env == "ohos" {
+    napi_build_ohos::setup();
+  }
+
+  println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+  let mobile = tauri_utils::platform::is_mobile_target();
+
   cfg_alias("desktop", !mobile);
   cfg_alias("mobile", mobile);
 
@@ -514,6 +520,14 @@ pub fn try_build(attributes: Attributes) -> Result<()> {
     if let Some(associations) = config.bundle.file_associations.as_ref() {
       mobile::update_android_manifest_file_associations(associations)?;
     }
+  }
+
+  // Materialize the `@tauri/app` HAR module from the single tauri source
+  // (crates/tauri/mobile/ohos) into gen/ohos/tauri — the OHOS counterpart of
+  // the gradle file generation above. Runs on every Rust build, which always
+  // precedes hvigor packaging.
+  if let Some(project_dir) = env::var_os("TAURI_OHOS_PROJECT_PATH").map(PathBuf::from) {
+    mobile::sync_ohos_tauri_module(project_dir)?;
   }
 
   cfg_alias("dev", is_dev());

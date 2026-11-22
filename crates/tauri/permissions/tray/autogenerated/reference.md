@@ -15,6 +15,7 @@ Default permissions for the plugin, which enables all commands.
 - `allow-set-temp-dir-path`
 - `allow-set-icon-as-template`
 - `allow-set-show-menu-on-left-click`
+- `allow-set-quick-operation`
 
 ## Permission Table
 
@@ -177,6 +178,32 @@ Enables the set_menu command without any pre-configured scope.
 <td>
 
 Denies the set_menu command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`core:tray:allow-set-quick-operation`
+
+</td>
+<td>
+
+Enables the set_quick_operation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`core:tray:deny-set-quick-operation`
+
+</td>
+<td>
+
+Denies the set_quick_operation command without any pre-configured scope.
 
 </td>
 </tr>

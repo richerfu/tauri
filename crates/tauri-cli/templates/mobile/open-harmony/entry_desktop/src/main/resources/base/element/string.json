@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "{{bundle.short-description}}"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "{{bundle.short-description}}"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "{{app.stylized-name}}"
+    },
+    {
+      "name": "reason_print",
+      "value": "Print documents"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "entry_mobile",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "@ohos-rs/ability": "{{{ability-dep}}}",
+    "@ohos-rs/ability-plugin-app-control": "{{{ability-plugin-app-control-dep}}}",
+    "@ohos-rs/ability-plugin-files": "{{{ability-plugin-files-dep}}}",
+    "@ohos-rs/ability-plugin-menu": "{{{ability-plugin-menu-dep}}}",
+    "@ohos-rs/ability-plugin-permission": "{{{ability-plugin-permission-dep}}}",
+    "@ohos-rs/ability-plugin-resource": "{{{ability-plugin-resource-dep}}}",
+    "@ohos-rs/ability-plugin-statusbar": "{{{ability-plugin-statusbar-dep}}}",
+    "@ohos-rs/ability-plugin-url": "{{{ability-plugin-url-dep}}}",
+    "@ohos-rs/ability-plugin-webview": "{{{ability-plugin-webview-dep}}}",
+    "@ohos-rs/ability-plugin-window": "{{{ability-plugin-window-dep}}}",
+    "@tauri/app": "file:../tauri"
+  }
+}

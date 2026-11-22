@@ -93,13 +93,16 @@ pub enum PageLoadEvent {
 pub struct NewWindowOpener {
   /// The instance of the webview that initiated the new window request.
   ///
-  /// This must be set as the related view of the new webview. See [`WebviewAttributes::related_view`].
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
+  /// This must be set as the related view of the new webview. See `WebviewAttributes::related_view`.
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub webview: webkit2gtk::WebView,
   /// The instance of the webview that initiated the new window request.
@@ -107,6 +110,7 @@ pub struct NewWindowOpener {
   /// The target webview environment **MUST** match the environment of the opener webview. See [`WebviewAttributes::environment`].
   #[cfg(windows)]
   pub webview: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+  /// The WebView2 environment of the opener webview.
   #[cfg(windows)]
   pub environment: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
   /// The instance of the webview that initiated the new window request.
@@ -128,6 +132,7 @@ pub struct NewWindowFeatures {
 }
 
 impl NewWindowFeatures {
+  /// Creates new window features from a size, a position and the opener.
   pub fn new(
     size: Option<crate::dpi::LogicalSize<f64>>,
     position: Option<crate::dpi::LogicalPosition<f64>>,
@@ -166,10 +171,14 @@ pub enum NewWindowResponse {
   ///
   /// ## Platform-specific:
   ///
-  /// **Linux**: The webview must be related to the caller webview. See [`WebviewAttributes::related_view`].
+  /// **Linux**: The webview must be related to the caller webview. See `WebviewAttributes::related_view`.
   /// **Windows**: The webview must use the same environment as the caller webview. See [`WebviewAttributes::environment`].
+  /// Allows the window to open, creating it inside the given webview window.
   #[cfg(not(any(target_os = "android", target_os = "ios")))]
-  Create { window_id: WindowId },
+  Create {
+    /// The window that requested the new window.
+    window_id: WindowId,
+  },
   /// Deny the window from being opened.
   Deny,
 }
@@ -211,8 +220,10 @@ pub struct PendingWebview<T: UserEvent, R: Runtime<T>> {
   /// A handler to decide if incoming url is allowed to navigate.
   pub navigation_handler: Option<Box<NavigationHandler>>,
 
+  /// A handler invoked when the page requests a new window.
   pub new_window_handler: Option<Box<NewWindowHandler>>,
 
+  /// A handler invoked when the document title changes.
   pub document_title_changed_handler: Option<Box<DocumentTitleChangedHandler>>,
 
   /// The resolved URL to load on the webview.
@@ -223,10 +234,13 @@ pub struct PendingWebview<T: UserEvent, R: Runtime<T>> {
   pub on_webview_created:
     Option<Box<dyn Fn(CreationContext<'_, '_>) -> Result<(), jni::errors::Error> + Send + Sync>>,
 
+  /// A handler invoked for each web resource request.
   pub web_resource_request_handler: Option<Box<WebResourceRequestHandler>>,
 
+  /// A handler invoked when a page load starts or finishes.
   pub on_page_load_handler: Option<Box<OnPageLoadHandler>>,
 
+  /// A handler that manages downloads started by the page.
   pub download_handler: Option<Arc<DownloadHandler>>,
 
   #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -263,6 +277,7 @@ impl<T: UserEvent, R: Runtime<T>> PendingWebview<T, R> {
     }
   }
 
+  /// Registers a custom URI scheme protocol on the webview.
   pub fn register_uri_scheme_protocol<
     N: Into<String>,
     H: Fn(&str, http::Request<Vec<u8>>, Box<dyn FnOnce(http::Response<Cow<'static, [u8]>>) + Send>)
@@ -329,7 +344,9 @@ impl<T: UserEvent, R: Runtime<T>> PartialEq for DetachedWebview<T, R> {
 /// The attributes used to create an webview.
 #[derive(Debug)]
 pub struct WebviewAttributes {
+  /// The URL to load on the webview.
   pub url: WebviewUrl,
+  /// The user agent to use for the webview.
   pub user_agent: Option<String>,
   /// A list of initialization javascript scripts to run when loading new pages.
   /// When webview load a new page, this initialization code will be executed.
@@ -345,31 +362,68 @@ pub struct WebviewAttributes {
   /// [addDocumentStartJavaScript]: https://developer.android.com/reference/androidx/webkit/WebViewCompat#addDocumentStartJavaScript(android.webkit.WebView,java.lang.String,java.util.Set%3Cjava.lang.String%3E)
   /// [onPageStarted]: https://developer.android.com/reference/android/webkit/WebViewClient#onPageStarted(android.webkit.WebView,%20java.lang.String,%20android.graphics.Bitmap)
   pub initialization_scripts: Vec<InitializationScript>,
+  /// The directory where local storage is persisted.
   pub data_directory: Option<PathBuf>,
+  /// Whether drag and drop events are forwarded to the drag drop handler.
   pub drag_drop_handler_enabled: bool,
+  /// Whether to render a transparent overlay Stack that receives ArkUI drag events
+  /// and forwards them to drag_drop_handler. OHOS-only (ArkWeb may not bubble OS file
+  /// drags to Web-level handlers; the overlay is the fallback). See ohos-webview-drag-drop-overlay.
+  #[cfg(target_env = "ohos")]
+  pub drag_drop_overlay: bool,
+  /// Whether clipboard access is enabled for the page.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / Windows**: gates the page's JS clipboard access only; keyboard
+  ///   Ctrl+C/X/V are engine-native and always work. Default `false`.
+  /// - **macOS**: always enabled (no toggle).
+  /// - **OHOS**: default `true` (ArkWeb native clipboard shortcuts, matching
+  ///   macOS/Windows keyboard behavior); `false` intercepts keyboard
+  ///   Ctrl+C/X/V/A/Z/Y via onKeyPreIme. See ohos-webview-flag-clipboard spec.
   pub clipboard: bool,
+  /// Whether the webview accepts the first mouse click that activates it.
   pub accept_first_mouse: bool,
+  /// Additional browser arguments passed to the webview engine.
   pub additional_browser_args: Option<String>,
+  /// The window effects to apply to the webview.
   pub window_effects: Option<WindowEffectsConfig>,
+  /// Whether the webview runs in incognito mode.
   pub incognito: bool,
+  /// Whether the webview background is transparent.
   pub transparent: bool,
+  /// Whether the webview is focused on creation.
   pub focus: bool,
+  /// The initial bounds of the webview.
   pub bounds: Option<Rect>,
+  /// Whether the webview resizes together with its parent window.
   pub auto_resize: bool,
+  /// The proxy URL used for web requests.
   pub proxy_url: Option<Url>,
+  /// Whether keyboard zoom hotkeys are enabled.
   pub zoom_hotkeys_enabled: bool,
+  /// Whether browser extensions are enabled.
   pub browser_extensions_enabled: bool,
+  /// The path browser extensions are loaded from.
   pub extensions_path: Option<PathBuf>,
+  /// The identifier used to isolate the data store of the webview.
   pub data_store_identifier: Option<[u8; 16]>,
+  /// Whether custom protocols are treated as secure HTTPS contexts.
   pub use_https_scheme: bool,
+  /// Whether the webview devtools are enabled.
   pub devtools: Option<bool>,
+  /// The background color of the webview.
   pub background_color: Option<Color>,
+  /// The traffic light position of the window on macOS.
   pub traffic_light_position: Option<dpi::Position>,
+  /// The throttling policy applied when the webview is in the background.
   pub background_throttling: Option<BackgroundThrottlingPolicy>,
+  /// Whether JavaScript execution is disabled in the webview.
   pub javascript_disabled: bool,
   /// on macOS and iOS there is a link preview on long pressing links, this is enabled by default.
   /// see https://docs.rs/objc2-web-kit/latest/objc2_web_kit/struct.WKWebView.html#method.allowsLinkPreview
   pub allow_link_preview: bool,
+  /// The scrollbar style used by the webview on macOS.
   pub scroll_bar_style: ScrollBarStyle,
   /// Controls the WebView's browser-level general autofill behavior.
   ///
@@ -410,12 +464,15 @@ pub struct WebviewAttributes {
 
   /// Creates a new webview sharing the same web process with the provided webview.
   /// Useful if you need to link a webview to another, for instance when using the [`PendingWebview::new_window_handler`].
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub related_view: Option<webkit2gtk::WebView>,
 
@@ -513,7 +570,13 @@ impl WebviewAttributes {
       initialization_scripts: Vec::new(),
       data_directory: None,
       drag_drop_handler_enabled: true,
-      clipboard: false,
+      #[cfg(target_env = "ohos")]
+      drag_drop_overlay: false,
+      // OHOS defaults to enabled (ArkWeb native clipboard shortcuts) so that
+      // default-configured windows keep working Ctrl+C like Windows/macOS.
+      // Other platforms keep the historical `false` default. See
+      // ohos-webview-flag-clipboard spec.
+      clipboard: cfg!(target_env = "ohos"),
       accept_first_mouse: false,
       additional_browser_args: None,
       window_effects: None,
@@ -540,12 +603,15 @@ impl WebviewAttributes {
       input_accessory_view_builder: None,
       #[cfg(windows)]
       environment: None,
-      #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
+      #[cfg(all(
+        any(
+          target_os = "linux",
+          target_os = "dragonfly",
+          target_os = "freebsd",
+          target_os = "netbsd",
+          target_os = "openbsd",
+        ),
+        not(target_env = "ohos")
       ))]
       related_view: None,
       #[cfg(target_os = "macos")]
@@ -630,9 +696,25 @@ impl WebviewAttributes {
   ///
   /// **macOS** doesn't provide such method and is always enabled by default,
   /// but you still need to add menu item accelerators to use shortcuts.
+  ///
+  /// **OHOS** is enabled by default (ArkWeb native clipboard shortcuts);
+  /// use [`Self::disable_clipboard_access`] to intercept keyboard
+  /// Ctrl+C/X/V/A/Z/Y.
   #[must_use]
   pub fn enable_clipboard_access(mut self) -> Self {
     self.clipboard = true;
+    self
+  }
+
+  /// Disables clipboard access for the page.
+  ///
+  /// This is the default on **Linux** and **Windows**. On **OHOS** the default
+  /// is enabled (ArkWeb native clipboard shortcuts); calling this intercepts
+  /// keyboard Ctrl+C/X/V/A/Z/Y via onKeyPreIme so they never reach ArkWeb.
+  /// See the ohos-webview-flag-clipboard spec.
+  #[must_use]
+  pub fn disable_clipboard_access(mut self) -> Self {
+    self.clipboard = false;
     self
   }
 
@@ -732,6 +814,18 @@ impl WebviewAttributes {
   #[must_use]
   pub fn use_https_scheme(mut self, enabled: bool) -> Self {
     self.use_https_scheme = enabled;
+    self
+  }
+
+  /// Sets whether to render a transparent drag-drop overlay (OHOS-only).
+  ///
+  /// When enabled, a transparent Stack with `HitTestMode.Transparent` is rendered
+  /// above the Web component to receive ArkUI drag events (ArkWeb may not bubble
+  /// OS file drags to Web-level handlers). Pointer events pass through to the Web.
+  #[cfg(target_env = "ohos")]
+  #[must_use]
+  pub fn drag_drop_overlay(mut self, enabled: bool) -> Self {
+    self.drag_drop_overlay = enabled;
     self
   }
 

@@ -6,6 +6,8 @@
 
 pub(crate) mod plugin;
 
+#[cfg(target_env = "ohos")]
+use crate::ohos::OHOSWindowKind;
 use tauri_runtime::{
   dpi::{PhysicalPosition, PhysicalRect, PhysicalSize},
   webview::PendingWebview,
@@ -51,6 +53,16 @@ use std::{
   hash::{Hash, Hasher},
   sync::{Arc, Mutex, MutexGuard},
 };
+
+/// Obtains a `MenuClient` from the global OHOS app singleton.
+/// Returns `None` if the app is not yet initialized.
+#[cfg(all(target_env = "ohos", desktop))]
+fn ohos_menu_client() -> Option<openharmony_ability_plugin_menu::MenuClient> {
+  use openharmony_ability_plugin_menu::MenuExt;
+  let guard = crate::ohos::APP.lock().ok()?;
+  let app = guard.as_ref()?;
+  app.menu().ok()
+}
 
 /// Monitor descriptor.
 #[derive(Debug, Clone, Serialize)]
@@ -438,9 +450,17 @@ tauri::Builder::default()
     let app_manager = self.manager.manager_owned();
     let window_label = window.label().to_string();
     let window_ = window.clone();
+    let effects_to_apply = self.window_effects.clone();
+    // OHOS: apply directly. set_window_blur uses TSFN (threadsafe, no main-thread Env needed),
+    // so no run_on_main_thread required (avoids run_on_main_thread + rx.recv() deadlock risk).
+    #[cfg(target_env = "ohos")]
+    if let Some(effects) = effects_to_apply.clone() {
+      let _ = crate::vibrancy::set_window_effects(&window_, Some(effects));
+    }
     // run on the main thread to fix a deadlock on webview.eval if the tracing feature is enabled
     let _ = window.run_on_main_thread(move || {
-      if let Some(effects) = self.window_effects {
+      #[cfg(not(target_env = "ohos"))]
+      if let Some(effects) = effects_to_apply {
         _ = crate::vibrancy::set_window_effects(&window_, Some(effects));
       }
       let event = crate::EventName::from_str("tauri://window-created");
@@ -449,6 +469,16 @@ tauri::Builder::default()
       });
       let _ = app_manager.emit(event, EmitPayload::Serialize(&payload));
     });
+
+    #[cfg(all(target_env = "ohos", desktop))]
+    if let Some(window_menu) = &*window.menu_lock() {
+      window_menu
+        .menu
+        .inner()
+        .refresh_menubar(window.label())
+        .ok();
+      muda::set_menubar_visible(true, window.label());
+    }
 
     Ok(window)
   }
@@ -480,6 +510,7 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   /// ## Platform-specific
   ///
   /// - **iOS / Android:** Unsupported.
+  /// - **OHOS:** Unsupported — the working-area clamp is silently skipped.
   #[must_use]
   pub fn prevent_overflow(mut self) -> Self {
     self.window_builder = self.window_builder.prevent_overflow();
@@ -494,6 +525,7 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   /// ## Platform-specific
   ///
   /// - **iOS / Android:** Unsupported.
+  /// - **OHOS:** Unsupported — the working-area clamp is silently skipped.
   #[must_use]
   pub fn prevent_overflow_with_margin(mut self, margin: impl Into<Size>) -> Self {
     self.window_builder = self
@@ -588,6 +620,13 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   }
 
   /// Sets the window icon.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** Ignored at creation time -- the platform backend does
+  ///   not consume a window icon during window creation (committer #168);
+  ///   there is no runtime `set_window_icon` on OHOS either, so the icon has
+  ///   no effect for the lifetime of the window.
   pub fn icon(mut self, icon: Image<'a>) -> crate::Result<Self> {
     self.window_builder = self.window_builder.icon(icon.into())?;
     Ok(self)
@@ -637,18 +676,25 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   ///     - An owned window is hidden when its owner is minimized.
   /// - **Linux**: This makes the new window transient for parent, see <https://docs.gtk.org/gtk3/method.Window.set_transient_for.html>
   /// - **macOS**: This adds the window as a child of parent, see <https://developer.apple.com/documentation/appkit/nswindow/1419152-addchildwindow?language=objc>
+  /// - **OpenHarmony**: Currently ignored — no owner/transient/child relation is applied.
+  // On OHOS none of the platform branches below apply, so `mut self` and
+  // `parent` are unused there.
+  #[cfg_attr(target_env = "ohos", allow(unused_mut, unused_variables))]
   pub fn parent(mut self, parent: &Window<R>) -> crate::Result<Self> {
     #[cfg(windows)]
     {
       self.window_builder = self.window_builder.owner(parent.hwnd()?);
     }
 
-    #[cfg(any(
-      target_os = "linux",
-      target_os = "dragonfly",
-      target_os = "freebsd",
-      target_os = "netbsd",
-      target_os = "openbsd"
+    #[cfg(all(
+      any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+      ),
+      not(target_env = "ohos")
     ))]
     {
       self.window_builder = self.window_builder.transient_for(&parent.gtk_window()?);
@@ -724,12 +770,15 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   /// See <https://docs.gtk.org/gtk3/method.Window.set_transient_for.html>
   ///
   /// **Note:** This is a low level API. See [`Self::parent`] for a higher level wrapper for Tauri windows.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn transient_for(mut self, parent: &Window<R>) -> crate::Result<Self> {
     self.window_builder = self.window_builder.transient_for(&parent.gtk_window()?);
@@ -741,12 +790,15 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   /// See <https://docs.gtk.org/gtk3/method.Window.set_transient_for.html>
   ///
   /// **Note:** This is a low level API. See [`Self::parent`] and [`Self::transient_for`] for higher level wrappers for Tauri windows.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   #[must_use]
   pub fn transient_for_raw(mut self, parent: &impl gtk::glib::IsA<gtk::Window>) -> Self {
@@ -887,6 +939,14 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   }
 
   /// Whether the window should be immediately visible upon creation.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** Ignored at creation time -- the platform backend does
+  ///   not consume a `visible: false` attribute during window creation
+  ///   (committer #168); windows are created visible. Toggle visibility with
+  ///   `Window::set_visible` after
+  ///   creation instead.
   #[must_use]
   pub fn visible(mut self, visible: bool) -> Self {
     self.window_builder = self.window_builder.visible(visible);
@@ -898,6 +958,10 @@ impl<'a, R: Runtime, M: Manager<R>> WindowBuilder<'a, R, M> {
   /// ## Platform-specific
   ///
   /// - **macOS**: Only supported on macOS 10.14+.
+  /// - **OpenHarmony:** Ignored at creation time -- the platform backend does
+  ///   not consume a preferred theme during window creation (committer #168);
+  ///   the window follows the system theme. `Window::set_theme` runtime
+  ///   requests are unaffected.
   #[must_use]
   pub fn theme(mut self, theme: Option<Theme>) -> Self {
     self.window_builder = self.window_builder.theme(theme);
@@ -950,6 +1014,29 @@ impl<R: Runtime, M: Manager<R>> WindowBuilder<'_, R, M> {
   pub fn created_by_activity_name<S: Into<String>>(mut self, class_name: S) -> Self {
     self.created_by_activity_name_set = true;
     self.window_builder = self.window_builder.created_by_activity_name(class_name);
+    self
+  }
+}
+
+/// OpenHarmony specific APIs
+#[cfg(target_env = "ohos")]
+impl<R: Runtime, M: Manager<R>> WindowBuilder<'_, R, M> {
+  /// Sets the OHOS window kind for this window.
+  ///
+  /// - `UIAbility`: a window backed by its own UIAbility instance. The FIRST
+  ///   window of the process must be this kind (it bootstraps the
+  ///   EntryAbility container; a SubWindow has nothing to attach to);
+  ///   subsequent windows may opt in explicitly and take the
+  ///   spawned-instance path.
+  /// - `SubWindow`: Application sub-window created via `windowStage.createSubWindow`,
+  ///   living inside this application's window tree (not the OS-wide floating
+  ///   window type `WindowType.TYPE_FLOAT`).
+  ///
+  /// Default when not specified: the first window of the process is
+  /// `UIAbility`, any later window is `SubWindow`. Use `SubWindow` for
+  /// sub-windows.
+  pub fn ohos_window_kind(mut self, kind: OHOSWindowKind) -> Self {
+    self.window_builder = self.window_builder.ohos_window_kind(kind);
     self
   }
 }
@@ -1278,31 +1365,46 @@ tauri::Builder::default()
 
     self.manager.menu.insert_menu_into_stash(&menu);
 
-    let window = self.clone();
-    let menu_ = menu.clone();
-    self.run_on_main_thread(move || {
-      #[cfg(windows)]
-      if let Ok(hwnd) = window.hwnd() {
-        let theme = window
-          .theme()
-          .map(crate::menu::map_to_menu_theme)
-          .unwrap_or(muda::MenuTheme::Auto);
+    #[cfg(target_env = "ohos")]
+    {
+      menu.inner().refresh_menubar(self.label()).ok();
+      muda::set_menubar_visible(true, self.label());
+    }
 
-        let _ = unsafe { menu_.inner().init_for_hwnd_with_theme(hwnd.0 as _, theme) };
-      }
-      #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-      ))]
-      if let (Ok(gtk_window), Ok(gtk_box)) = (window.gtk_window(), window.default_vbox()) {
-        let _ = menu_
-          .inner()
-          .init_for_gtk_window(&gtk_window, Some(&gtk_box));
-      }
-    })?;
+    // OHOS: the Win32/GTK per-window menubar init does not apply — the
+    // menubar is already driven through the OHOS menu bridge in the block
+    // above, so the main-thread hop is skipped entirely.
+    #[cfg(not(target_env = "ohos"))]
+    {
+      let window = self.clone();
+      let menu_ = menu.clone();
+      self.run_on_main_thread(move || {
+        #[cfg(windows)]
+        if let Ok(hwnd) = window.hwnd() {
+          let theme = window
+            .theme()
+            .map(crate::menu::map_to_menu_theme)
+            .unwrap_or(muda::MenuTheme::Auto);
+
+          let _ = unsafe { menu_.inner().init_for_hwnd_with_theme(hwnd.0 as _, theme) };
+        }
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
+        ))]
+        if let (Ok(gtk_window), Ok(gtk_box)) = (window.gtk_window(), window.default_vbox()) {
+          let _ = menu_
+            .inner()
+            .init_for_gtk_window(&gtk_window, Some(&gtk_box));
+        }
+      })?;
+    }
 
     self.menu_lock().replace(WindowMenu {
       is_app_wide: false,
@@ -1321,7 +1423,16 @@ tauri::Builder::default()
   pub fn remove_menu(&self) -> crate::Result<Option<Menu<R>>> {
     let prev_menu = self.menu_lock().take().map(|m| m.menu);
 
+    #[cfg(target_env = "ohos")]
+    if let Some(_menu) = &prev_menu {
+      muda::set_menubar_visible(false, self.label());
+      muda::set_menu_json("[]", self.label());
+    }
+
     // remove from the window
+    // OHOS: same as `set_menu` — the bridge already received the empty JSON
+    // above, and the Win32/GTK removal does not apply.
+    #[cfg(not(target_env = "ohos"))]
     #[cfg_attr(target_os = "macos", allow(unused_variables))]
     if let Some(menu) = &prev_menu {
       let window = self.clone();
@@ -1331,12 +1442,15 @@ tauri::Builder::default()
         if let Ok(hwnd) = window.hwnd() {
           let _ = unsafe { menu.inner().remove_for_hwnd(hwnd.0 as _) };
         }
-        #[cfg(any(
-          target_os = "linux",
-          target_os = "dragonfly",
-          target_os = "freebsd",
-          target_os = "netbsd",
-          target_os = "openbsd"
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
         ))]
         if let Ok(gtk_window) = window.gtk_window() {
           let _ = menu.inner().remove_for_gtk_window(&gtk_window);
@@ -1353,7 +1467,13 @@ tauri::Builder::default()
 
   /// Hides the window menu.
   pub fn hide_menu(&self) -> crate::Result<()> {
-    // remove from the window
+    #[cfg(target_env = "ohos")]
+    {
+      muda::set_menubar_visible(false, self.label());
+      return Ok(());
+    }
+
+    #[cfg(not(target_env = "ohos"))]
     #[cfg_attr(target_os = "macos", allow(unused_variables))]
     if let Some(window_menu) = &*self.menu_lock() {
       let window = self.clone();
@@ -1363,12 +1483,15 @@ tauri::Builder::default()
         if let Ok(hwnd) = window.hwnd() {
           let _ = unsafe { menu_.inner().hide_for_hwnd(hwnd.0 as _) };
         }
-        #[cfg(any(
-          target_os = "linux",
-          target_os = "dragonfly",
-          target_os = "freebsd",
-          target_os = "netbsd",
-          target_os = "openbsd"
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
         ))]
         if let Ok(gtk_window) = window.gtk_window() {
           let _ = menu_.inner().hide_for_gtk_window(&gtk_window);
@@ -1376,12 +1499,22 @@ tauri::Builder::default()
       })?;
     }
 
+    #[cfg(not(target_env = "ohos"))]
     Ok(())
   }
 
   /// Shows the window menu.
   pub fn show_menu(&self) -> crate::Result<()> {
-    // remove from the window
+    #[cfg(target_env = "ohos")]
+    {
+      if let Some(window_menu) = &*self.menu_lock() {
+        window_menu.menu.inner().refresh_menubar(self.label()).ok();
+      }
+      muda::set_menubar_visible(true, self.label());
+      return Ok(());
+    }
+
+    #[cfg(not(target_env = "ohos"))]
     #[cfg_attr(target_os = "macos", allow(unused_variables))]
     if let Some(window_menu) = &*self.menu_lock() {
       let window = self.clone();
@@ -1391,12 +1524,15 @@ tauri::Builder::default()
         if let Ok(hwnd) = window.hwnd() {
           let _ = unsafe { menu_.inner().show_for_hwnd(hwnd.0 as _) };
         }
-        #[cfg(any(
-          target_os = "linux",
-          target_os = "dragonfly",
-          target_os = "freebsd",
-          target_os = "netbsd",
-          target_os = "openbsd"
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
         ))]
         if let Ok(gtk_window) = window.gtk_window() {
           let _ = menu_.inner().show_for_gtk_window(&gtk_window);
@@ -1404,12 +1540,29 @@ tauri::Builder::default()
       })?;
     }
 
+    #[cfg(not(target_env = "ohos"))]
     Ok(())
   }
 
-  /// Shows the window menu.
+  /// Returns whether the window menu is visible.
+  ///
+  /// ## Platform-specific:
+  ///
+  /// - **OHOS:** The visibility is read synchronously from the menu bridge,
+  ///   while `hide_menu`/`show_menu` apply their change asynchronously through
+  ///   muda's menu worker queue — so a read immediately after a hide/show may
+  ///   briefly return the previous state (eventual consistency).
   pub fn is_menu_visible(&self) -> crate::Result<bool> {
-    // remove from the window
+    #[cfg(target_env = "ohos")]
+    {
+      if let Some(client) = ohos_menu_client() {
+        return Ok(client.is_menubar_visible(self.label()));
+      }
+      // Upstream semantics: no window menu -> not visible.
+      return Ok(false);
+    }
+
+    #[cfg(not(target_env = "ohos"))]
     #[cfg_attr(target_os = "macos", allow(unused_variables))]
     if let Some(window_menu) = &*self.menu_lock() {
       let (tx, rx) = std::sync::mpsc::channel();
@@ -1420,12 +1573,15 @@ tauri::Builder::default()
         if let Ok(hwnd) = window.hwnd() {
           let _ = tx.send(unsafe { menu_.inner().is_visible_on_hwnd(hwnd.0 as _) });
         }
-        #[cfg(any(
-          target_os = "linux",
-          target_os = "dragonfly",
-          target_os = "freebsd",
-          target_os = "netbsd",
-          target_os = "openbsd"
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
         ))]
         if let Ok(gtk_window) = window.gtk_window() {
           let _ = tx.send(menu_.inner().is_visible_on_gtk_window(&gtk_window));
@@ -1435,6 +1591,7 @@ tauri::Builder::default()
       return Ok(rx.recv().unwrap_or(false));
     }
 
+    #[cfg(not(target_env = "ohos"))]
     Ok(false)
   }
 
@@ -1539,6 +1696,11 @@ impl<R: Runtime> Window<R> {
   /// ## Platform-specific
   ///
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** on a UIAbility main window this reads as always
+  ///   available -- the three decoration buttons are OS-managed and carry no
+  ///   per-window state (disclosed reading, issue Eulogizethesun/tauri#238).
+  ///   Sub-windows read the flag last written by [`Self::set_maximizable`] /
+  ///   the creation seed.
   pub fn is_maximizable(&self) -> crate::Result<bool> {
     self.window.dispatcher.is_maximizable().map_err(Into::into)
   }
@@ -1548,6 +1710,11 @@ impl<R: Runtime> Window<R> {
   /// ## Platform-specific
   ///
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** on a UIAbility main window this reads as always
+  ///   available -- the three decoration buttons are OS-managed and carry no
+  ///   per-window state (disclosed reading, issue Eulogizethesun/tauri#238).
+  ///   Sub-windows read the flag last written by [`Self::set_minimizable`] /
+  ///   the creation seed.
   pub fn is_minimizable(&self) -> crate::Result<bool> {
     self.window.dispatcher.is_minimizable().map_err(Into::into)
   }
@@ -1557,6 +1724,11 @@ impl<R: Runtime> Window<R> {
   /// ## Platform-specific
   ///
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** on a UIAbility main window this reads as always
+  ///   available -- the three decoration buttons are OS-managed and carry no
+  ///   per-window state (disclosed reading, issue Eulogizethesun/tauri#238).
+  ///   Sub-windows read the flag last written by [`Self::set_closable`] /
+  ///   the creation seed.
   pub fn is_closable(&self) -> crate::Result<bool> {
     self.window.dispatcher.is_closable().map_err(Into::into)
   }
@@ -1671,12 +1843,15 @@ impl<R: Runtime> Window<R> {
   /// Returns the `ApplicationWindow` from gtk crate that is used by this window.
   ///
   /// Note that this type can only be used on the main thread.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn gtk_window(&self) -> crate::Result<gtk::ApplicationWindow> {
     self.window.dispatcher.gtk_window().map_err(Into::into)
@@ -1685,12 +1860,15 @@ impl<R: Runtime> Window<R> {
   /// Returns the vertical [`gtk::Box`] that is added by default as the sole child of this window.
   ///
   /// Note that this type can only be used on the main thread.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn default_vbox(&self) -> crate::Result<gtk::Box> {
     self.window.dispatcher.default_vbox().map_err(Into::into)
@@ -1774,16 +1952,56 @@ impl<R: Runtime> Window<R> {
   }
 
   /// Hide this window.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** kind-split (issue Eulogizethesun/tauri#237, refined
+  ///   by #241 to match the tao T28-4 contract). On a main window there is no
+  ///   hide semantics: per the SDK d.ts `minimize()` has dual semantics by
+  ///   caller type (main window = taskbar minimize, restored from the dock),
+  ///   and UIAbility-level `hideAbility` is out of reach on PC/2in1 -- the
+  ///   window is left untouched. Sub-windows / floating windows hide for
+  ///   real (the SDK `minimize()` IS the hide primitive there, restored via
+  ///   [`Self::show`]).
+  ///
+  /// # Errors
+  ///
+  /// - **OpenHarmony:** main window -- `NotSupported` ("hiding the main window
+  ///   is not supported on OpenHarmony").
   pub fn hide(&self) -> crate::Result<()> {
     self.window.dispatcher.hide().map_err(Into::into)
   }
 
-  /// Closes this window. It emits [`crate::RunEvent::CloseRequested`] first like a user-initiated close request so you can intercept it.
+  /// Closes this window. It emits `WindowEvent::CloseRequested` first like a user-initiated close request so you can intercept it.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** a `window.close()` call made by the web page itself
+  ///   (JS) is a no-op on the main window — ArkWeb delivers page close
+  ///   requests through the Web `onWindowExit` event, which the framework
+  ///   only registers for script-opened new-window dialogs (`window.open`
+  ///   targets). This API (and the JS `getCurrentWindow().close()`) does emit
+  ///   `WindowEvent::CloseRequested` and honors `prevent_close`.
   pub fn close(&self) -> crate::Result<()> {
     self.window.dispatcher.close().map_err(Into::into)
   }
 
   /// Destroys this window. Similar to [`Self::close`] but does not emit any events and force close the window instead.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** like on desktop, `destroy` skips
+  ///   `WindowEvent::CloseRequested` and tears the window down
+  ///   directly. For the main window only the Rust-side lifecycle runs — the
+  ///   OS-level ability window is system-managed and an in-app destroy is
+  ///   rejected by the bridge (only sub-windows are destroyed OS-level).
+  ///   When the last window closes, the app cannot be kept alive: the
+  ///   `ExitRequested` event fires after the system has already committed to
+  ///   destroying the UIAbility window stage, so `prevent_exit` cannot revert
+  ///   it (the cancellable exception is the PC / 2-in-1 pre-close probe — see
+  ///   [`crate::ExitRequestApi::prevent_exit`]); there is no "app keeps
+  ///   running with zero windows" form on this platform, and window-level
+  ///   `prevent_close` is the equivalent capability.
   pub fn destroy(&self) -> crate::Result<()> {
     self.window.dispatcher.destroy().map_err(Into::into)
   }
@@ -1945,6 +2163,16 @@ impl<R: Runtime> Window<R> {
   ///
   /// - **macOS:** Disables the "zoom" button in the window titlebar, which is also used to enter fullscreen mode.
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's three decoration buttons
+  ///   are OS-managed (`@ohos.window` has no API for these operation-level
+  ///   flags), so calling this on the main window returns an error (issue
+  ///   Eulogizethesun/tauri#238). Sub-windows (float/sub-window kind) support
+  ///   the flag.
+  ///
+  /// # Errors
+  ///
+  /// - **OpenHarmony:** main window -- `NotSupported` ("setting window buttons
+  ///   on the main window is not supported on OpenHarmony").
   pub fn set_maximizable(&self, maximizable: bool) -> crate::Result<()> {
     self
       .window
@@ -1958,6 +2186,14 @@ impl<R: Runtime> Window<R> {
   /// ## Platform-specific
   ///
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's three decoration buttons
+  ///   are OS-managed, so calling this on the main window returns an error
+  ///   (issue Eulogizethesun/tauri#238). Sub-windows support the flag.
+  ///
+  /// # Errors
+  ///
+  /// - **OpenHarmony:** main window -- `NotSupported` ("setting window buttons
+  ///   on the main window is not supported on OpenHarmony").
   pub fn set_minimizable(&self, minimizable: bool) -> crate::Result<()> {
     self
       .window
@@ -1973,6 +2209,14 @@ impl<R: Runtime> Window<R> {
   /// - **Linux:** "GTK+ will do its best to convince the window manager not to show a close button.
   ///   Depending on the system, this function may not have any effect when called on a window that is already visible"
   /// - **iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's three decoration buttons
+  ///   are OS-managed, so calling this on the main window returns an error
+  ///   (issue Eulogizethesun/tauri#238). Sub-windows support the flag.
+  ///
+  /// # Errors
+  ///
+  /// - **OpenHarmony:** main window -- `NotSupported` ("setting window buttons
+  ///   on the main window is not supported on OpenHarmony").
   pub fn set_closable(&self, closable: bool) -> crate::Result<()> {
     self
       .window
@@ -2061,9 +2305,23 @@ tauri::Builder::default()
   ///
   /// - **Windows**: If using decorations or shadows, you may want to try this workaround <https://github.com/tauri-apps/tao/issues/72#issuecomment-975607891>
   /// - **Linux**: Unsupported
+  /// - **OpenHarmony:** only `Effect::Blur` and `Effect::Acrylic` are applied;
+  ///   `Mica`/`Tabbed` variants are skipped with an info log, and macOS-specific
+  ///   effects fall back to a basic blur approximation. Requires the window to
+  ///   be `transparent` (see `crates/tauri/src/vibrancy/ohos.rs`).
   pub fn set_effects<E: Into<Option<WindowEffectsConfig>>>(&self, effects: E) -> crate::Result<()> {
     let effects = effects.into();
     let window = self.clone();
+    // OHOS: apply directly. set_window_blur uses TSFN (threadsafe, no main-thread Env needed),
+    // so no run_on_main_thread required (avoids the run_on_main_thread + rx.recv() deadlock risk
+    // per ohos-constraints.md). ohos_window_id() uses send_user_message + recv, safe from any
+    // thread (main thread event loop handles OhosWindowId; not a run_on_main_thread closure).
+    #[cfg(target_env = "ohos")]
+    {
+      let _ = crate::vibrancy::set_window_effects(&window, effects);
+      return Ok(());
+    }
+    #[cfg(not(target_env = "ohos"))]
     self.run_on_main_thread(move || {
       let _ = crate::vibrancy::set_window_effects(&window, effects);
     })

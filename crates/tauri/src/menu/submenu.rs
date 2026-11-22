@@ -11,7 +11,11 @@ use crate::menu::NativeIcon;
 use crate::menu::SubmenuInner;
 use crate::run_main_thread;
 use crate::{AppHandle, Manager, Position, Runtime, Window};
-use muda::{ContextMenu, Icon as MudaIcon, MenuId};
+use muda::{Icon as MudaIcon, MenuId};
+// The muda `ContextMenu` trait is only used by the non-OHOS popup arms below;
+// OHOS calls the inherent `popup` instead.
+#[cfg(not(target_env = "ohos"))]
+use muda::ContextMenu;
 
 impl<R: Runtime> super::ContextMenu for Submenu<R> {
   #[cfg(target_os = "windows")]
@@ -39,38 +43,57 @@ impl<R: Runtime> ContextMenuBase for Submenu<R> {
     position: Option<P>,
   ) -> crate::Result<()> {
     let position = position.map(Into::into);
-    run_item_main_thread!(self, move |self_: Self| {
-      #[cfg(target_os = "macos")]
-      if let Ok(view) = window.ns_view() {
-        unsafe {
+    #[cfg(target_env = "ohos")]
+    {
+      let (x, y) = match position {
+        Some(crate::Position::Logical(p)) => (Some(p.x), Some(p.y)),
+        Some(crate::Position::Physical(p)) => (Some(p.x as f64), Some(p.y as f64)),
+        None => (None, None),
+      };
+      let window_id = window.label();
+      (*self.0)
+        .as_ref()
+        .popup(x, y, window_id)
+        .map_err(Into::into)
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+      run_item_main_thread!(self, move |self_: Self| {
+        #[cfg(target_os = "macos")]
+        if let Ok(view) = window.ns_view() {
+          unsafe {
+            self_
+              .inner()
+              .show_context_menu_for_nsview(view as _, position);
+          }
+        }
+
+        #[cfg(all(
+          any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+          ),
+          not(target_env = "ohos")
+        ))]
+        if let Ok(w) = window.gtk_window() {
           self_
             .inner()
-            .show_context_menu_for_nsview(view as _, position);
+            .show_context_menu_for_gtk_window(w.as_ref(), position);
         }
-      }
 
-      #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-      ))]
-      if let Ok(w) = window.gtk_window() {
-        self_
-          .inner()
-          .show_context_menu_for_gtk_window(w.as_ref(), position);
-      }
-
-      #[cfg(windows)]
-      if let Ok(hwnd) = window.hwnd() {
-        unsafe {
-          self_
-            .inner()
-            .show_context_menu_for_hwnd(hwnd.0 as _, position);
+        #[cfg(windows)]
+        if let Ok(hwnd) = window.hwnd() {
+          unsafe {
+            self_
+              .inner()
+              .show_context_menu_for_hwnd(hwnd.0 as _, position);
+          }
         }
-      }
-    })
+      })
+    }
   }
 
   fn inner_context(&self) -> &dyn muda::ContextMenu {
@@ -117,6 +140,7 @@ impl<R: Runtime> Submenu<R> {
     let app_handle = handle.clone();
     let text = text.as_ref().to_owned();
     let icon_data = icon.map(|i| (i.rgba().to_vec(), i.width(), i.height()));
+
     let submenu = run_main_thread!(handle, || {
       let submenu = muda::Submenu::new(text, enabled);
       if let Some((rgba, width, height)) = icon_data.clone() {
@@ -128,6 +152,7 @@ impl<R: Runtime> Submenu<R> {
         app_handle,
       }
     })?;
+
     Ok(Self(Arc::new(submenu)))
   }
 
@@ -141,6 +166,7 @@ impl<R: Runtime> Submenu<R> {
     let handle = manager.app_handle();
     let app_handle = handle.clone();
     let text = text.as_ref().to_owned();
+
     let submenu = run_main_thread!(handle, || {
       let submenu = muda::Submenu::new(text, enabled);
       if let Some(icon) = icon {
@@ -152,6 +178,7 @@ impl<R: Runtime> Submenu<R> {
         app_handle,
       }
     })?;
+
     Ok(Self(Arc::new(submenu)))
   }
 
@@ -193,6 +220,7 @@ impl<R: Runtime> Submenu<R> {
     let id = id.into();
     let text = text.as_ref().to_owned();
     let icon_data = icon.map(|i| (i.rgba().to_vec(), i.width(), i.height()));
+
     let submenu = run_main_thread!(handle, || {
       let submenu = muda::Submenu::with_id(id.clone(), text, enabled);
       if let Some((rgba, width, height)) = icon_data.clone() {
@@ -204,6 +232,7 @@ impl<R: Runtime> Submenu<R> {
         app_handle,
       }
     })?;
+
     Ok(Self(Arc::new(submenu)))
   }
 
@@ -219,6 +248,7 @@ impl<R: Runtime> Submenu<R> {
     let app_handle = handle.clone();
     let id = id.into();
     let text = text.as_ref().to_owned();
+
     let submenu = run_main_thread!(handle, || {
       let submenu = muda::Submenu::with_id(id.clone(), text, enabled);
       if let Some(icon) = icon {
@@ -230,6 +260,7 @@ impl<R: Runtime> Submenu<R> {
         app_handle,
       }
     })?;
+
     Ok(Self(Arc::new(submenu)))
   }
 
@@ -259,6 +290,8 @@ impl<R: Runtime> Submenu<R> {
     Ok(menu)
   }
 
+  // Only called from the non-OHOS `popup_inner` arms (`show_context_menu_*`).
+  #[cfg(not(target_env = "ohos"))]
   pub(crate) fn inner(&self) -> &muda::Submenu {
     (*self.0).as_ref()
   }
@@ -279,7 +312,8 @@ impl<R: Runtime> Submenu<R> {
     run_item_main_thread!(self, |self_: Self| {
       (*self_.0).as_ref().append(kind.inner().inner_muda())
     })?
-    .map_err(Into::into)
+    .map_err(Into::<crate::Error>::into)?;
+    Ok(())
   }
 
   /// Add menu items to the end of this submenu. It calls [`Submenu::append`] in a loop internally.
@@ -287,7 +321,6 @@ impl<R: Runtime> Submenu<R> {
     for item in items {
       self.append(*item)?
     }
-
     Ok(())
   }
 
@@ -297,7 +330,8 @@ impl<R: Runtime> Submenu<R> {
     run_item_main_thread!(self, |self_: Self| {
       (*self_.0).as_ref().prepend(kind.inner().inner_muda())
     })?
-    .map_err(Into::into)
+    .map_err(Into::<crate::Error>::into)?;
+    Ok(())
   }
 
   /// Add menu items to the beginning of this submenu. It calls [`Submenu::insert_items`] with position of `0` internally.
@@ -313,7 +347,8 @@ impl<R: Runtime> Submenu<R> {
         .as_ref()
         .insert(kind.inner().inner_muda(), position)
     })?
-    .map_err(Into::into)
+    .map_err(Into::<crate::Error>::into)?;
+    Ok(())
   }
 
   /// Insert menu items at the specified `position` in this submenu.
@@ -321,7 +356,6 @@ impl<R: Runtime> Submenu<R> {
     for (i, item) in items.iter().enumerate() {
       self.insert(*item, position + i)?
     }
-
     Ok(())
   }
 
@@ -331,17 +365,19 @@ impl<R: Runtime> Submenu<R> {
     run_item_main_thread!(self, |self_: Self| {
       (*self_.0).as_ref().remove(kind.inner().inner_muda())
     })?
-    .map_err(Into::into)
+    .map_err(Into::<crate::Error>::into)?;
+    Ok(())
   }
 
   /// Remove the menu item at the specified position from this submenu and returns it.
   pub fn remove_at(&self, position: usize) -> crate::Result<Option<MenuItemKind<R>>> {
-    run_item_main_thread!(self, |self_: Self| {
+    let result = run_item_main_thread!(self, |self_: Self| {
       (*self_.0)
         .as_ref()
         .remove_at(position)
         .map(|i| MenuItemKind::from_muda(self_.0.app_handle.clone(), i))
-    })
+    })?;
+    Ok(result)
   }
 
   /// Retrieves the menu item matching the given identifier.
@@ -377,19 +413,26 @@ impl<R: Runtime> Submenu<R> {
   /// Set the text for this submenu. `text` could optionally contain
   /// an `&` before a character to assign this character as the mnemonic
   /// for this submenu. To display a `&` without assigning a mnemonic, use `&&`.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony**: `&` mnemonics are not supported; the `&` characters are
+  ///   silently removed from the displayed text.
   pub fn set_text<S: AsRef<str>>(&self, text: S) -> crate::Result<()> {
     let text = text.as_ref().to_string();
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_text(text))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_text(text))?;
+    Ok(())
   }
 
-  /// Get whether this submenu is enabled or not.
+  /// Get whether this submenu is enabled.
   pub fn is_enabled(&self) -> crate::Result<bool> {
     run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().is_enabled())
   }
 
-  /// Enable or disable this submenu.
+  /// Set whether this submenu is enabled.
   pub fn set_enabled(&self, enabled: bool) -> crate::Result<()> {
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_enabled(enabled))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_enabled(enabled))?;
+    Ok(())
   }
 
   /// Set this submenu as the Window menu for the application on macOS.
@@ -424,7 +467,8 @@ impl<R: Runtime> Submenu<R> {
       Some(i) => Some(i.try_into()?),
       None => None,
     };
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_icon(icon))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_icon(icon))?;
+    Ok(())
   }
 
   /// Change this submenu icon to a native image or remove it.
@@ -433,6 +477,11 @@ impl<R: Runtime> Submenu<R> {
   ///
   /// - **Windows / Linux**: Unsupported.
   pub fn set_native_icon(&self, _icon: Option<NativeIcon>) -> crate::Result<()> {
+    #[cfg(target_env = "ohos")]
+    {
+      (*self.0).as_ref().set_native_icon(_icon.map(Into::into));
+      return Ok(());
+    }
     #[cfg(target_os = "macos")]
     return run_item_main_thread!(self, |self_: Self| {
       (*self_.0).as_ref().set_native_icon(_icon.map(Into::into))

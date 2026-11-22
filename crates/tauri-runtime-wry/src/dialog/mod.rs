@@ -5,9 +5,10 @@
 #[cfg(windows)]
 mod windows;
 
-pub fn error<S: AsRef<str>>(err: S) {
+#[allow(dead_code)]
+pub fn error<S: AsRef<str>>(_err: S) {
   #[cfg(windows)]
-  windows::error(err);
+  windows::error(_err);
 
   #[cfg(not(windows))]
   {

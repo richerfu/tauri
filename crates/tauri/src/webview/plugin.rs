@@ -40,13 +40,44 @@ async fn create_webview_window<R: Runtime>(
   Ok(())
 }
 
+/// Cross-platform webview commands — available on all platforms including
+/// OHOS mobile. Only commands whose underlying wry backend is verified
+/// cross-platform should live here.
+mod commands {
+  use super::*;
+  use crate::{command, utils::config::Color, Webview};
+
+  #[cfg(any(desktop, target_env = "ohos"))]
+  fn get_webview<R: Runtime>(
+    webview: Webview<R>,
+    label: Option<String>,
+  ) -> crate::Result<Webview<R>> {
+    match label {
+      Some(l) if !l.is_empty() => webview
+        .manager()
+        .get_webview(&l)
+        .ok_or(crate::Error::WebviewNotFound),
+      _ => Ok(webview),
+    }
+  }
+
+  #[cfg(any(desktop, target_env = "ohos"))]
+  #[command(root = "crate")]
+  pub async fn set_webview_background_color<R: Runtime>(
+    webview: Webview<R>,
+    label: Option<String>,
+    value: Option<Color>,
+  ) -> crate::Result<()> {
+    get_webview(webview, label)?.set_background_color(value)
+  }
+}
+
 #[cfg(desktop)]
 mod desktop_commands {
   use super::*;
   use crate::{
     command,
     runtime::dpi::{Position, Size},
-    utils::config::Color,
     Webview,
   };
 
@@ -121,11 +152,6 @@ mod desktop_commands {
   setter!(webview_hide, hide);
   setter!(webview_show, show);
   setter!(set_webview_zoom, set_zoom, f64);
-  setter!(
-    set_webview_background_color,
-    set_background_color,
-    Option<Color>
-  );
   setter!(clear_all_browsing_data, clear_all_browsing_data);
 
   #[cfg(not(feature = "unstable"))]
@@ -197,8 +223,10 @@ mod desktop_commands {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   #[allow(unused_mut)]
   let mut init_script = String::new();
-  // window.print works on Linux/Windows; need to use the API on macOS
-  #[cfg(any(target_os = "macos", target_os = "ios"))]
+  // window.print works on Linux/Windows; need to use the API on macOS/iOS/OHOS.
+  // OHOS ArkWeb has no native window.print, so the print.js shim (which invokes
+  // plugin:webview|print → wry OHOS print → createPdf → @ohos.print) is required.
+  #[cfg(any(target_os = "macos", target_os = "ios", target_env = "ohos"))]
   {
     init_script.push_str(include_str!("./scripts/print.js"));
   }
@@ -215,7 +243,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
     init_script.push_str(
       &Devtools {
-        os_name: std::env::consts::OS,
+        os_name: crate::os_name(),
       }
       .render_default(&Default::default())
       .unwrap()
@@ -243,7 +271,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       #[cfg(desktop)] desktop_commands::set_webview_position,
       #[cfg(desktop)] desktop_commands::set_webview_focus,
       #[cfg(desktop)] desktop_commands::set_webview_auto_resize,
-      #[cfg(desktop)] desktop_commands::set_webview_background_color,
+      #[cfg(any(desktop, target_env = "ohos"))]
+      commands::set_webview_background_color,
       #[cfg(desktop)] desktop_commands::set_webview_zoom,
       #[cfg(desktop)] desktop_commands::webview_hide,
       #[cfg(desktop)] desktop_commands::webview_show,

@@ -12,8 +12,8 @@ fn alias(alias: &str, has_feature: bool) {
 }
 
 fn main() {
-  let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-  let mobile = target_os == "ios" || target_os == "android";
+  let mobile = tauri_utils::platform::is_mobile_target();
+
   alias("desktop", !mobile);
   alias("mobile", mobile);
 }

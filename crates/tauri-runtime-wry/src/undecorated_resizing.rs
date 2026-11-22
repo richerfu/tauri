@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-#![cfg(any(
-  windows,
-  target_os = "linux",
-  target_os = "dragonfly",
-  target_os = "freebsd",
-  target_os = "netbsd",
-  target_os = "openbsd"
+#![cfg(all(
+  any(
+    windows,
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+  ),
+  not(target_env = "ohos")
 ))]
 
 const CLIENT: isize = 0b0000;
@@ -423,7 +426,7 @@ mod windows {
     // hrgn1 must be mutable to call .free() later
     let mut hrgn1 = CreateRectRgn(0, 0, width, height);
 
-    let x1 = if only_top { 0 } else { border_x };
+    let x1 = if only_top { 0i32 } else { border_x };
     let y1 = border_y;
     let x2 = if only_top { width } else { width - border_x };
     let y2 = if only_top { height } else { height - border_y };
@@ -434,7 +437,7 @@ mod windows {
     CombineRgn(Some(hrgn1), Some(hrgn1), Some(*hrgn2), RGN_DIFF);
 
     // Try to set the window region
-    if SetWindowRgn(hwnd, Some(hrgn1), true) == 0 {
+    if SetWindowRgn(hwnd, Some(hrgn1), true) == 0i32 {
       // If it fails, we must free hrgn1 manually
       hrgn1.free();
     }

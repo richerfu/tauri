@@ -220,7 +220,15 @@ impl<T: UserEvent> RuntimeHandle<T> for MockRuntimeHandle {
   fn display_handle(
     &self,
   ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-    #[cfg(target_os = "linux")]
+    // OHOS: mirror tao's rwh_06 backend (OhosDisplayHandle) — the mock has no
+    // native window, but the display handle needs no window.
+    #[cfg(target_env = "ohos")]
+    return Ok(unsafe {
+      raw_window_handle::DisplayHandle::borrow_raw(raw_window_handle::RawDisplayHandle::Ohos(
+        raw_window_handle::OhosDisplayHandle::new(),
+      ))
+    });
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     return Ok(unsafe {
       raw_window_handle::DisplayHandle::borrow_raw(raw_window_handle::RawDisplayHandle::Xlib(
         raw_window_handle::XlibDisplayHandle::new(None, 0),
@@ -341,6 +349,11 @@ impl WindowBuilderBase for MockWindowBuilder {}
 
 impl WindowBuilder for MockWindowBuilder {
   fn new() -> Self {
+    Self {}
+  }
+
+  #[cfg(target_env = "ohos")]
+  fn ohos_window_kind(self, _kind: tauri_runtime::OHOSWindowKind) -> Self {
     Self {}
   }
 
@@ -483,12 +496,15 @@ impl WindowBuilder for MockWindowBuilder {
     self
   }
 
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   fn transient_for(self, parent: &impl gtk::glib::IsA<gtk::Window>) -> Self {
     self
@@ -686,6 +702,17 @@ impl<T: UserEvent> WebviewDispatch<T> for MockWebviewDispatcher {
     Ok(())
   }
 
+  #[cfg(target_env = "ohos")]
+  fn create_pdf(
+    &self,
+    _path: String,
+    _config: Option<tauri_runtime::PdfConfig>,
+    callback: Box<dyn Fn(bool) + Send + 'static>,
+  ) -> Result<()> {
+    callback(true);
+    Ok(())
+  }
+
   fn hide(&self) -> Result<()> {
     Ok(())
   }
@@ -703,6 +730,12 @@ impl<T: UserEvent> WindowDispatch<T> for MockWindowDispatcher {
   type Runtime = MockRuntime;
 
   type WindowBuilder = MockWindowBuilder;
+
+  #[cfg(target_env = "ohos")]
+  fn ohos_window_id(&self) -> Result<Option<i64>> {
+    // The mock has no OS window.
+    Ok(None)
+  }
 
   fn run_on_main_thread<F: FnOnce() + Send + 'static>(&self, f: F) -> Result<()> {
     self.context.send_message(Message::Task(Box::new(f)))
@@ -802,23 +835,29 @@ impl<T: UserEvent> WindowDispatch<T> for MockWindowDispatcher {
     Ok(Theme::Light)
   }
 
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   fn gtk_window(&self) -> Result<gtk::ApplicationWindow> {
     unimplemented!()
   }
 
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   fn default_vbox(&self) -> Result<gtk::Box> {
     unimplemented!()
@@ -837,7 +876,10 @@ impl<T: UserEvent> WindowDispatch<T> for MockWindowDispatcher {
   fn window_handle(
     &self,
   ) -> std::result::Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-    #[cfg(target_os = "linux")]
+    // OHOS: the mock has no native window to borrow a handle from.
+    #[cfg(target_env = "ohos")]
+    return Err(raw_window_handle::HandleError::Unavailable);
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     return unsafe {
       Ok(raw_window_handle::WindowHandle::borrow_raw(
         raw_window_handle::RawWindowHandle::Xlib(raw_window_handle::XlibWindowHandle::new(0)),
@@ -1184,13 +1226,16 @@ impl<T: UserEvent> Runtime<T> for MockRuntime {
     Ok(Self::init())
   }
 
-  #[cfg(any(
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      windows,
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd"
+    ),
+    not(target_env = "ohos")
   ))]
   fn new_any_thread(_args: RuntimeInitArgs) -> Result<Self> {
     Ok(Self::init())
@@ -1307,15 +1352,7 @@ impl<T: UserEvent> Runtime<T> for MockRuntime {
 
   fn set_device_event_filter(&mut self, filter: DeviceEventFilter) {}
 
-  #[cfg(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-  ))]
+  #[cfg(desktop)]
   fn run_iteration<F: FnMut(RunEvent<T>)>(&mut self, callback: F) {}
 
   fn run_return<F: FnMut(RunEvent<T>) + 'static>(self, callback: F) -> i32 {

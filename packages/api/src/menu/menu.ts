@@ -14,7 +14,7 @@ import { CheckMenuItem } from './checkMenuItem'
 import { IconMenuItem } from './iconMenuItem'
 import { PredefinedMenuItem } from './predefinedMenuItem'
 import { itemFromKind, Submenu } from './submenu'
-import { type LogicalPosition, PhysicalPosition, Position } from '../dpi'
+import { LogicalPosition, PhysicalPosition, Position } from '../dpi'
 import { type Window } from '../window'
 import { invoke } from '../core'
 import { type ItemKind, MenuItemBase, newMenu } from './base'
@@ -220,11 +220,18 @@ export class Menu extends MenuItemBase {
     at?: PhysicalPosition | LogicalPosition | Position,
     window?: Window
   ): Promise<void> {
+    let position = at instanceof Position ? at : at ? new Position(at) : null
+    if (!position && (globalThis as any).__TAURI_MENU_LAST_POINTER__) {
+      const p = (globalThis as any).__TAURI_MENU_LAST_POINTER__
+      if (p.x || p.y) {
+        position = new Position(new LogicalPosition(p.x, p.y))
+      }
+    }
     return invoke('plugin:menu|popup', {
       rid: this.rid,
       kind: this.kind,
       window: window?.label ?? null,
-      at: at instanceof Position ? at : at ? new Position(at) : null
+      at: position
     })
   }
 

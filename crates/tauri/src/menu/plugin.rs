@@ -418,8 +418,13 @@ fn new<R: Runtime>(
     }
 
     ItemKind::Predefined => {
+      let predefined_item = options.predefined_item.ok_or_else(|| {
+        crate::Error::Anyhow(anyhow::anyhow!(
+          "missing required field `item` for Predefined menu item"
+        ))
+      })?;
       let item = PredefinedMenuItemPayload {
-        item: options.predefined_item.unwrap(),
+        item: predefined_item,
         text: options.text,
       }
       .create_item(&webview, &resources_table)?;
@@ -677,6 +682,38 @@ async fn popup<R: Runtime>(
     .map(|w| webview.manager().get_window(&w))
     .unwrap_or(Some(current_window));
 
+  #[cfg(target_env = "ohos")]
+  let at = if at.is_none() {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<Position>>();
+    let tx = std::sync::Mutex::new(Some(tx));
+    let eval_result = webview.eval_with_callback(
+      "JSON.stringify(window.__TAURI_MENU_LAST_POINTER__)",
+      move |result| {
+        if let Some(tx) = tx.lock().unwrap().take() {
+          let pos = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| {
+              let x = v.get("x")?.as_f64()?;
+              let y = v.get("y")?.as_f64()?;
+              Some(Position::Logical(crate::LogicalPosition::new(x, y)))
+            });
+          let _ = tx.send(pos);
+        }
+      },
+    );
+    if eval_result.is_ok() {
+      tokio::time::timeout(std::time::Duration::from_millis(500), rx)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .flatten()
+    } else {
+      None
+    }
+  } else {
+    at
+  };
+
   if let Some(window) = window {
     let resources_table = webview.resources_table();
     match kind {
@@ -889,7 +926,8 @@ fn set_icon<R: Runtime>(
 struct MenuChannels(Mutex<HashMap<MenuId, Channel<MenuId>>>);
 
 pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
-  Builder::new("menu")
+  #[allow(unused_mut)]
+  let mut builder = Builder::new("menu")
     .setup(|app, _api| {
       app.manage(MenuChannels(Mutex::default()));
       Ok(())
@@ -925,6 +963,14 @@ pub(crate) fn init<R: Runtime>() -> TauriPlugin<R> {
       is_checked,
       set_checked,
       set_icon,
-    ])
-    .build()
+    ]);
+
+  #[cfg(target_env = "ohos")]
+  {
+    builder = builder.js_init_script(
+      r#"(function(){var pos={x:0,y:0};document.addEventListener('pointerdown',function(e){pos.x=e.clientX;pos.y=e.clientY;},true);window.__TAURI_MENU_LAST_POINTER__=pos;})()"#
+    );
+  }
+
+  builder.build()
 }

@@ -10,6 +10,8 @@ use crate::{Runtime, Window};
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_env = "ohos")]
+pub(crate) mod ohos;
 #[cfg(windows)]
 mod windows;
 
@@ -22,9 +24,13 @@ pub fn set_window_effects<R: Runtime>(
     windows::apply_effects(window, _effects);
     #[cfg(target_os = "macos")]
     macos::apply_effects(window, _effects);
+    #[cfg(target_env = "ohos")]
+    ohos::apply_effects(window, _effects);
   } else {
     #[cfg(windows)]
     windows::clear_effects(window);
+    #[cfg(target_env = "ohos")]
+    ohos::clear_effects(window);
   }
   Ok(())
 }

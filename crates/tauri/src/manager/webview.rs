@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
+#[allow(unused_imports)]
+use std::fs::create_dir_all;
 use std::{
   borrow::Cow,
   collections::{HashMap, HashSet},
   fmt,
-  fs::create_dir_all,
   sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -409,8 +410,13 @@ impl<R: Runtime> WebviewManager<R> {
     InitJavascript {
       pattern_script,
       ipc_script,
+      // core.js uses os_name only in convertFileSrc, where the checked names
+      // are `windows`/`android`: both `linux` (the previous value here) and
+      // `ohos` take the generic `protocol://localhost/...` branch, so the
+      // consolidation is output-neutral. The app loading its own assets
+      // through the protocol layer exercises this path on device.
       core_script: &CoreJavascript {
-        os_name: std::env::consts::OS,
+        os_name: crate::os_name(),
         protocol_scheme: if use_https_scheme { "https" } else { "http" },
         invoke_key: self.invoke_key(),
       }
@@ -531,9 +537,14 @@ impl<R: Runtime> WebviewManager<R> {
       manager.manager_owned(),
     ));
 
-    // in `windows`, we need to force a data_directory
+    // in `windows` and `linux`, we need to force a data_directory
     // but we do respect user-specification
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    // Note: Android and OHOS (mobile platforms) don't need data_directory as their webviews
+    // automatically use the app's data directory
+    #[cfg(all(
+      any(target_os = "linux", target_os = "windows"),
+      not(target_env = "ohos")
+    ))]
     if pending.webview_attributes.data_directory.is_none() {
       let local_app_data = manager.path().resolve(
         &app_manager.config.identifier,
@@ -545,6 +556,8 @@ impl<R: Runtime> WebviewManager<R> {
     }
 
     // make sure the directory is created and available to prevent a panic
+    // On mobile platforms (Android, OHOS), data_directory is not used, so we skip this
+    #[cfg(not(any(target_os = "android", target_env = "ohos")))]
     if let Some(user_data_dir) = &pending.webview_attributes.data_directory {
       if !user_data_dir.exists() {
         create_dir_all(user_data_dir)?;
@@ -564,7 +577,7 @@ impl<R: Runtime> WebviewManager<R> {
         .initialization_scripts
         .push(InitializationScript {
           script: HotkeyZoom {
-            os_name: std::env::consts::OS,
+            os_name: crate::os_name(),
           }
           .render_default(&Default::default())?
           .into_string(),

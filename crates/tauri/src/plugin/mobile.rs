@@ -11,9 +11,12 @@ use crate::{
   sealed::{ManagerBase, RuntimeOrDispatch},
 };
 
-#[cfg(mobile)]
-use std::sync::atomic::{AtomicI32, Ordering};
-#[cfg(mobile)]
+#[cfg(any(mobile, target_env = "ohos"))]
+use std::sync::atomic::AtomicI32;
+#[cfg(any(mobile, target_env = "ohos"))]
+#[allow(unused_imports)]
+use std::sync::atomic::Ordering;
+#[cfg(any(mobile, target_env = "ohos"))]
 use tokio::sync::oneshot;
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -26,13 +29,17 @@ use std::{
 
 type PluginResponse = Result<serde_json::Value, serde_json::Value>;
 
+#[allow(dead_code)]
 type PendingPluginCallHandler = Box<dyn FnOnce(PluginResponse) + Send + 'static>;
 
-#[cfg(mobile)]
+#[cfg(any(mobile, target_env = "ohos"))]
+#[allow(dead_code)]
 static PENDING_PLUGIN_CALLS_ID: AtomicI32 = AtomicI32::new(0);
-static PENDING_PLUGIN_CALLS: OnceLock<Mutex<HashMap<i32, PendingPluginCallHandler>>> =
+#[allow(dead_code)]
+pub(crate) static PENDING_PLUGIN_CALLS: OnceLock<Mutex<HashMap<i32, PendingPluginCallHandler>>> =
   OnceLock::new();
-static CHANNELS: OnceLock<Mutex<HashMap<u32, Channel<serde_json::Value>>>> = OnceLock::new();
+pub(crate) static CHANNELS: OnceLock<Mutex<HashMap<u32, Channel<serde_json::Value>>>> =
+  OnceLock::new();
 
 /// Possible errors when invoking a plugin.
 #[derive(Debug, thiserror::Error)]
@@ -278,6 +285,28 @@ impl<R: Runtime, C: DeserializeOwned> PluginApi<R, C> {
       handle: self.handle.clone(),
     })
   }
+
+  /// Registers an OHOS native plugin for this builder: the plugin with the
+  /// given `plugin_identifier` and `class_name` is registered when the app
+  /// starts up on OpenHarmony.
+  #[cfg(target_env = "ohos")]
+  pub fn register_ohos_plugin(
+    &self,
+    plugin_identifier: &str,
+    class_name: &str,
+  ) -> Result<PluginHandle<R>, PluginInvokeError> {
+    let mut plugins = crate::ohos::PLUGINS_TO_REGISTER.lock().unwrap();
+    plugins.push(crate::ohos::PluginRegistration {
+      name: self.name.to_string(),
+      identifier: plugin_identifier.to_string(),
+      class_name: class_name.to_string(),
+      config: (*self.raw_config).clone(),
+    });
+    Ok(PluginHandle {
+      name: self.name,
+      handle: self.handle.clone(),
+    })
+  }
 }
 
 impl<R: Runtime> PluginHandle<R> {
@@ -340,6 +369,88 @@ impl<R: Runtime> PluginHandle<R> {
       ),
     }
   }
+}
+
+/// Fallback for plugin commands the Rust side did not handle (`extend_api`
+/// returned false): initializes channels carried in the payload and forwards
+/// the command to the native (Kotlin/Swift/ArkTS) plugin side through
+/// [`run_command`]. Returns `true` when the command was forwarded.
+///
+/// Both the main-thread path (`Webview::on_message`) and the OHOS
+/// lock-contention path (`AppManager::extend_api` offloads to the blocking
+/// pool when the plugin store lock is busy) must run this same fallback when
+/// the command is not handled -- otherwise the JS promise never settles.
+#[cfg(any(mobile, target_env = "ohos"))]
+pub(crate) fn run_mobile_channel_fallback<R: Runtime>(
+  plugin: &str,
+  app_handle: &AppHandle<R>,
+  message: crate::ipc::InvokeMessage<R>,
+  resolver: &crate::ipc::InvokeResolver<R>,
+) -> bool {
+  fn load_channels<R: Runtime>(payload: &serde_json::Value, webview: &crate::Webview<R>) {
+    use std::str::FromStr;
+
+    if let serde_json::Value::Object(map) = payload {
+      for v in map.values() {
+        if let serde_json::Value::String(s) = v {
+          let _ = crate::ipc::JavaScriptChannelId::from_str(s)
+            .map(|id| id.channel_on::<R, ()>(webview.clone()));
+        }
+      }
+    }
+  }
+
+  // resolve/reject take the resolver by value -- take ownership of a clone
+  let resolver = resolver.clone();
+
+  let payload = message.payload.into_json();
+  // initialize channels
+  load_channels(&payload, &message.webview);
+
+  let resolver_ = resolver.clone();
+  match run_command(
+    plugin,
+    app_handle,
+    heck::AsLowerCamelCase(message.command.as_str()).to_string(),
+    payload,
+    move |response| match response {
+      Ok(r) => resolver_.resolve(r),
+      Err(e) => resolver_.reject(e),
+    },
+  ) {
+    Ok(()) => true,
+    Err(e) => {
+      resolver.reject(e.to_string());
+      false
+    }
+  }
+}
+
+#[cfg(target_env = "ohos")]
+pub(crate) fn run_command<R: Runtime, C: AsRef<str>, F: FnOnce(PluginResponse) + Send + 'static>(
+  name: &str,
+  _handle: &AppHandle<R>,
+  command: C,
+  payload: serde_json::Value,
+  handler: F,
+) -> Result<(), PluginInvokeError> {
+  let id: i32 = PENDING_PLUGIN_CALLS_ID.fetch_add(1, Ordering::Relaxed);
+  PENDING_PLUGIN_CALLS
+    .get_or_init(Default::default)
+    .lock()
+    .unwrap()
+    .insert(id, Box::new(handler));
+
+  let args = crate::ohos::RunCommandArgs {
+    id,
+    plugin_name: name.to_string(),
+    command: command.as_ref().to_string(),
+    payload: serde_json::to_string(&payload).map_err(PluginInvokeError::CannotSerializePayload)?,
+  };
+
+  crate::ohos::dispatch_run_command(args);
+
+  Ok(())
 }
 
 #[cfg(target_os = "ios")]

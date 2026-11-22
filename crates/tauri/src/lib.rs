@@ -75,7 +75,7 @@ pub use resources::{Resource, ResourceId, ResourceTable};
 #[doc(hidden)]
 pub use swift_rs;
 pub use tauri_macros::include_image;
-#[cfg(mobile)]
+#[cfg(any(mobile, target_env = "ohos"))]
 pub use tauri_macros::mobile_entry_point;
 pub use tauri_macros::{command, generate_handler};
 
@@ -88,6 +88,12 @@ mod error;
 mod event;
 pub mod ipc;
 mod manager;
+#[doc(hidden)]
+#[cfg(target_env = "ohos")]
+pub mod ohos;
+#[doc(hidden)]
+#[cfg(target_env = "ohos")]
+pub mod ohos_plugin;
 mod pattern;
 pub mod plugin;
 pub(crate) mod protocol;
@@ -195,13 +201,16 @@ use std::{
 };
 use utils::assets::{AssetKey, CspHash, EmbeddedAssets};
 
-#[cfg(feature = "wry")]
+#[cfg(all(feature = "wry", not(target_env = "ohos")))]
 #[cfg_attr(docsrs, doc(cfg(feature = "wry")))]
 pub use tauri_runtime_wry::webview_version;
 
 #[cfg(target_os = "macos")]
 #[cfg_attr(docsrs, doc(cfg(target_os = "macos")))]
 pub use runtime::ActivationPolicy;
+
+#[cfg(target_env = "ohos")]
+pub use tauri_runtime::PdfConfig;
 
 pub use self::utils::TitleBarStyle;
 
@@ -1068,15 +1077,31 @@ pub(crate) mod sealed {
   }
 }
 
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 struct UnsafeSend<T>(T);
 unsafe impl<T> Send for UnsafeSend<T> {}
 
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 impl<T> UnsafeSend<T> {
   fn take(self) -> T {
     self.0
   }
 }
 
+// On OHOS, `run_on_main_thread` + `rx.recv()` deadlocks when invoked from
+// callbacks sharing the ArkTS main thread. The OHOS muda/tray backends are
+// safe to call from any thread (muda OHOS setters use pure Rust / Atomics;
+// tray dispatches through non-blocking TSFN internally), so run inline.
+#[cfg(target_env = "ohos")]
+#[allow(unused)]
+macro_rules! run_main_thread {
+  ($handle:ident, $ex:expr) => {{
+    let f = $ex;
+    Ok::<_, crate::Error>(f())
+  }};
+}
+
+#[cfg(not(target_env = "ohos"))]
 #[allow(unused)]
 macro_rules! run_main_thread {
   ($handle:ident, $ex:expr) => {{
@@ -1094,6 +1119,18 @@ macro_rules! run_main_thread {
 
 #[allow(unused)]
 pub(crate) use run_main_thread;
+
+/// The OS name injected into the JS initialization-script templates.
+///
+/// OHOS reports `linux` through `std::env::consts::OS`, while the JS templates
+/// check explicitly for `ohos` (e.g. `ipc-protocol.js`).
+pub(crate) fn os_name() -> &'static str {
+  if cfg!(target_env = "ohos") {
+    "ohos"
+  } else {
+    std::env::consts::OS
+  }
+}
 
 #[cfg(any(test, feature = "test"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test")))]
@@ -1134,7 +1171,7 @@ const _: () = {
   }
 };
 
-#[cfg(test)]
+#[cfg(all(test, not(target_env = "ohos")))]
 mod tests {
   use cargo_toml::Manifest;
   use std::{env::var, fs::read_to_string, path::PathBuf, sync::OnceLock};

@@ -68,6 +68,22 @@ pub fn get<R: Runtime>(
   })
 }
 
+/// Reads a proxied network response into a [`CachedResponse`] — the shared
+/// body of the OHOS / non-OHOS lock-hygiene variants in `get_response`.
+#[cfg(all(dev, mobile))]
+fn read_cached_response(
+  r: reqwest::Response,
+) -> Result<CachedResponse, Box<dyn std::error::Error>> {
+  let status = r.status();
+  let headers = r.headers().clone();
+  let body = crate::async_runtime::safe_block_on(r.bytes())?;
+  Ok(CachedResponse {
+    status,
+    headers,
+    body,
+  })
+}
+
 fn get_response<R: Runtime>(
   #[allow(unused_mut)] mut request: Request<Vec<u8>>,
   #[allow(unused_variables)] manager: &AppManager<R>,
@@ -119,10 +135,29 @@ fn get_response<R: Runtime>(
       let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
+    // `client` is only mutated when a TLS feature is enabled; this block is
+    // also compiled on OHOS mobile dev builds, which may lack all of them.
+    #[cfg_attr(
+      not(any(
+        feature = "native-tls",
+        feature = "native-tls-vendored",
+        feature = "rustls-tls"
+      )),
+      allow(unused_mut)
+    )]
     let mut client = reqwest::ClientBuilder::new();
 
     if url.starts_with("https://") {
       // we can't load env vars at runtime, gotta embed them in the lib
+      // (`cert_pem` is only read when a TLS feature is enabled — see above)
+      #[cfg_attr(
+        not(any(
+          feature = "native-tls",
+          feature = "native-tls-vendored",
+          feature = "rustls-tls"
+        )),
+        allow(unused_variables)
+      )]
       if let Some(cert_pem) = option_env!("TAURI_DEV_ROOT_CERTIFICATE") {
         #[cfg(any(
           feature = "native-tls",
@@ -164,24 +199,51 @@ fn get_response<R: Runtime>(
     proxy_builder = proxy_builder.body(request.body().clone());
     match crate::async_runtime::safe_block_on(proxy_builder.send()) {
       Ok(r) => {
-        let mut response_cache_ = response_cache.lock().unwrap();
-        let mut response = None;
-        if r.status() == http::StatusCode::NOT_MODIFIED {
-          response = response_cache_.get(&url);
-        }
-        let response = if let Some(r) = response {
-          r
-        } else {
-          let status = r.status();
-          let headers = r.headers().clone();
-          let body = crate::async_runtime::safe_block_on(r.bytes())?;
-          let response = CachedResponse {
-            status,
-            headers,
-            body,
+        // Lock hygiene (design.md D1 fix-2, OHOS only): NOT_MODIFIED cache lookup
+        // stays in the first lock scope; the network read (safe_block_on(r.bytes()))
+        // is moved outside the lock to avoid holding the Mutex across potentially
+        // slow I/O. On OHOS the request handler can run on the NAPI main thread,
+        // where holding a lock across network I/O stalls TSFN callbacks. Other
+        // platforms keep the upstream single-flight semantics: lookup and insert
+        // stay under one lock; the guard is released once the response is cloned
+        // (just before the header-copy loop) rather than at the end of the
+        // function as upstream does — the loop and builder calls below never
+        // touch the cache, so this is equivalent.
+        #[cfg(target_env = "ohos")]
+        let response = {
+          let cached = if r.status() == http::StatusCode::NOT_MODIFIED {
+            response_cache.lock().unwrap().get(&url).cloned()
+          } else {
+            None
           };
-          response_cache_.insert(url.clone(), response);
-          response_cache_.get(&url).unwrap()
+          match cached {
+            Some(cached) => cached,
+            None => {
+              let new_response = read_cached_response(r)?;
+              response_cache
+                .lock()
+                .unwrap()
+                .insert(url.clone(), new_response.clone());
+              new_response
+            }
+          }
+        };
+        #[cfg(not(target_env = "ohos"))]
+        let response = {
+          let mut response_cache_ = response_cache.lock().unwrap();
+          let cached = if r.status() == http::StatusCode::NOT_MODIFIED {
+            response_cache_.get(&url).cloned()
+          } else {
+            None
+          };
+          match cached {
+            Some(cached) => cached,
+            None => {
+              let new_response = read_cached_response(r)?;
+              response_cache_.insert(url.clone(), new_response.clone());
+              new_response
+            }
+          }
         };
         for (name, value) in &response.headers {
           builder = builder.header(name, value);

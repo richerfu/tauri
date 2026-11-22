@@ -29,17 +29,17 @@ mod plugin;
 mod remove;
 mod signer;
 
-use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use env_logger::fmt::style::{AnsiColor, Style};
 use env_logger::Builder;
 pub use error::{Error, ErrorExt, Result};
 use log::Level;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::io::{BufReader, Write};
 use std::process::{exit, Command, ExitStatus, Output, Stdio};
 use std::{
   ffi::OsString,
-  fmt::Display,
   fs::read_to_string,
   io::BufRead,
   path::PathBuf,
@@ -89,11 +89,15 @@ impl FromStr for ConfigValue {
   }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+/// The platform mode the CLI is running for.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 pub enum RunMode {
+  /// The desktop mode.
   Desktop,
+  /// The iOS mode.
   #[cfg(target_os = "macos")]
   Ios,
+  /// The Android mode.
   Android,
 }
 
@@ -112,6 +116,7 @@ impl Display for RunMode {
   }
 }
 
+/// The versions of the tauri crates recorded in the app metadata.
 #[derive(Deserialize)]
 pub struct VersionMetadata {
   tauri: String,
@@ -121,6 +126,7 @@ pub struct VersionMetadata {
   tauri_plugin: String,
 }
 
+/// The subset of `package.json` fields the CLI consumes.
 #[derive(Deserialize)]
 pub struct PackageJson {
   name: Option<String>,
@@ -154,6 +160,8 @@ enum Commands {
   Build(build::Options),
   Bundle(bundle::Options),
   Android(mobile::android::Cli),
+  #[clap(name("ohos"), alias("oh"), alias("open-harmony"), alias("openharmony"))]
+  OpenHarmony(mobile::open_harmony::Cli),
   #[cfg(target_os = "macos")]
   Ios(mobile::ios::Cli),
   /// Migrate from v1 to v2
@@ -225,7 +233,7 @@ where
     Ok(s) => s,
     Err(e) => e.exit(),
   };
-  // set the verbosity level so subsequent CLI calls (xcode-script, android-studio-script) refer to it
+  // set the verbosity level so subsequent CLI calls (xcode-script, android-studio-script, dev-eco-studio-script) refer to it
   let verbosity_number = get_verbosity(cli.verbose);
   std::env::set_var("TAURI_CLI_VERBOSITY", verbosity_number.to_string());
 
@@ -288,6 +296,7 @@ where
     Commands::Permission(options) => acl::permission::command(options)?,
     Commands::Capability(options) => acl::capability::command(options)?,
     Commands::Android(c) => mobile::android::command(c, cli.verbose)?,
+    Commands::OpenHarmony(c) => mobile::open_harmony::command(c, cli.verbose)?,
     #[cfg(target_os = "macos")]
     Commands::Ios(c) => mobile::ios::command(c, cli.verbose)?,
     Commands::Migrate => migrate::command()?,
@@ -317,10 +326,15 @@ fn prettyprint_level(lvl: Level) -> &'static str {
   }
 }
 
+/// Extension trait adding pipe-aware helpers to `std::process::Command`.
 pub trait CommandExt {
   // The `pipe` function sets the stdout and stderr to properly
   // show the command output in the Node.js wrapper.
+  /// Runs the command inheriting the stdio pipes so the Node.js wrapper
+  /// shows its output, and returns the exit status.
   fn piped(&mut self) -> std::io::Result<ExitStatus>;
+  /// Runs the command capturing its output, failing if the command
+  /// exits unsuccessfully.
   fn output_ok(&mut self) -> crate::Result<Output>;
 }
 

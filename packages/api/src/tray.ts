@@ -70,6 +70,30 @@ type RustTrayIconEvent = Omit<TrayIconEvent, 'rect'> & {
  * @module
  */
 
+/**
+ * QuickOperation configuration for OHOS left-click popup. **OHOS only**.
+ *
+ * On OHOS, when a user left-clicks the tray icon, the system can show a popup panel
+ * rendered by a `StatusBarViewExtensionAbility`. This interface configures that popup.
+ *
+ * On other platforms, this is silently ignored.
+ */
+export interface QuickOperationConfig {
+  /** Popup title bar text. Overlong text shows ellipsis. */
+  title: string
+  /** Popup content area height in vp (must be > 0). */
+  height: number
+  /**
+   * Name of the `StatusBarViewExtensionAbility` registered in `module.json5`.
+   * Empty string disables the popup (left-click only fires `statusBarIconClick` event).
+   */
+  abilityName: string
+  /** Module name where the ExtensionAbility is defined. Defaults to current module. */
+  moduleName?: string
+  /** Whether to show a loading animation. Requires OHOS 6.0.0(20)+. */
+  loadingStatus?: boolean
+}
+
 /** {@link TrayIcon.new|`TrayIcon`} creation options */
 export interface TrayIconOptions {
   /** The tray icon id. If undefined, a random one will be assigned */
@@ -133,6 +157,13 @@ export interface TrayIconOptions {
    * @since 2.2.0
    */
   showMenuOnLeftClick?: boolean
+  /**
+   * QuickOperation for left-click popup. **OHOS only**.
+   *
+   * On OHOS, configures the system popup panel shown when the user left-clicks
+   * the tray icon. On other platforms, this is silently ignored.
+   */
+  quickOperation?: QuickOperationConfig
   /** A handler for an event on the tray icon. */
   action?: (event: TrayIconEvent) => void
 }
@@ -325,6 +356,23 @@ export class TrayIcon extends Resource {
     return invoke('plugin:tray|set_show_menu_on_left_click', {
       rid: this.rid,
       onLeft
+    })
+  }
+
+  /**
+   * Set QuickOperation for left-click popup. **OHOS only**.
+   *
+   * On OHOS, configures the system popup panel shown when the user left-clicks
+   * the tray icon. Pass `null` to disable the popup (left-click will only fire events).
+   *
+   * On other platforms, this is silently ignored.
+   */
+  async setQuickOperation(
+    config: QuickOperationConfig | null
+  ): Promise<void> {
+    return invoke('plugin:tray|set_quick_operation', {
+      rid: this.rid,
+      config
     })
   }
 }

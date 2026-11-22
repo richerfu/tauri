@@ -103,17 +103,26 @@ export class Image extends Resource {
  *
  * See [tauri::image::JsImage](https://docs.rs/tauri/2/tauri/image/enum.JsImage.html) for more information.
  * Note the API signature is not stable and might change.
+ *
+ * Uses duck-type check (typeof image.rid === 'number') instead of instanceof Image
+ * because Vite/Rolldown may bundle this module into multiple chunks with separate
+ * Image class definitions. instanceof fails across chunk boundaries, causing
+ * transformImage to return the whole Image object instead of the rid number,
+ * which then fails Rust deserialization with "missing field rgba".
  */
 export function transformImage<T>(
   image: string | Image | Uint8Array | ArrayBuffer | number[] | null
 ): T {
+  interface RidHolder { rid: number }
   const ret =
     image == null
       ? null
       : typeof image === 'string'
         ? image
-        : image instanceof Image
-          ? image.rid
+        // Duck-type: check for rid property rather than instanceof Image,
+        // since Vite may produce duplicate Image classes in different chunks
+        : typeof (image as RidHolder).rid === 'number'
+          ? (image as RidHolder).rid
           : image
 
   return ret as T

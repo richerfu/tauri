@@ -74,6 +74,13 @@ pub fn render_with_generator<
     if let Some(extension) = file_path.extension() {
       if extension == "crate-manifest" {
         file_path.set_extension("toml");
+      } else if extension == "hbs" {
+        let stem = file_path
+          .file_stem()
+          .unwrap()
+          .to_string_lossy()
+          .into_owned();
+        file_path.set_file_name(stem);
       }
     }
     if let Some(mut output_file) = out_file_generator(file_path.clone())

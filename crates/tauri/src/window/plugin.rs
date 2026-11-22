@@ -98,7 +98,32 @@ mod commands {
   setter!(set_position, Position);
   setter!(set_focus);
   setter!(set_focusable, bool);
-  setter!(set_background_color, Option<Color>);
+  // Custom implementation for set_background_color (upstream setter! output on
+  // non-OHOS; OHOS additionally mirrors the color onto the webview layer).
+  #[command(root = "crate")]
+  pub async fn set_background_color<R: Runtime>(
+    window: Window<R>,
+    label: Option<String>,
+    value: Option<Color>,
+  ) -> crate::Result<()> {
+    #[cfg(target_env = "ohos")]
+    log::info!(
+      "[tauri-window] set_background_color called with value: {:?}",
+      value
+    );
+    let window = get_window(window, label)?;
+    // On OHOS the OS window background is structurally covered by the window
+    // container + ArkUI content layers, so the window-layer dispatch alone has
+    // no visible effect. `WebviewWindow::set_background_color` (the Rust API)
+    // sets BOTH the window and webview backgrounds — mirror that here for the
+    // JS command: also dispatch to the webview layer (ArkWeb component
+    // backgroundColor) so the color is visible through a transparent page.
+    #[cfg(target_env = "ohos")]
+    for webview in window.webviews() {
+      webview.set_background_color(value.clone())?;
+    }
+    window.set_background_color(value)
+  }
   setter!(set_size_constraints, WindowSizeConstraints);
   setter!(set_theme, Option<Theme>);
   setter!(set_enabled, bool);
@@ -115,6 +140,10 @@ mod desktop_commands {
     Monitor, PhysicalPosition, Position, UserAttentionType, Webview,
   };
 
+  getter!(current_monitor, Option<Monitor>);
+  getter!(primary_monitor, Option<Monitor>);
+  getter!(available_monitors, Vec<Monitor>);
+
   getter!(is_fullscreen, bool);
   getter!(is_minimized, bool);
   getter!(is_maximized, bool);
@@ -122,9 +151,6 @@ mod desktop_commands {
   getter!(is_maximizable, bool);
   getter!(is_minimizable, bool);
   getter!(is_closable, bool);
-  getter!(current_monitor, Option<Monitor>);
-  getter!(primary_monitor, Option<Monitor>);
-  getter!(available_monitors, Vec<Monitor>);
   getter!(cursor_position, PhysicalPosition<f64>);
   getter!(is_always_on_top, bool);
 
@@ -242,9 +268,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     os_name: &'a str,
   }
 
+  // drag.js only branches on `macos`; the OHOS value needs no special casing.
   init_script.push_str(
     &Drag {
-      os_name: std::env::consts::OS,
+      os_name: crate::os_name(),
     }
     .render_default(&Default::default())
     .unwrap()
@@ -292,6 +319,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::set_background_color,
       commands::set_theme,
 
+      #[cfg(desktop)] desktop_commands::current_monitor,
+      #[cfg(desktop)] desktop_commands::primary_monitor,
+      #[cfg(desktop)] desktop_commands::available_monitors,
+
       #[cfg(desktop)] desktop_commands::is_fullscreen,
       #[cfg(desktop)] desktop_commands::is_minimized,
       #[cfg(desktop)] desktop_commands::is_maximized,
@@ -299,13 +330,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       #[cfg(desktop)] desktop_commands::is_maximizable,
       #[cfg(desktop)] desktop_commands::is_minimizable,
       #[cfg(desktop)] desktop_commands::is_closable,
-      #[cfg(desktop)] desktop_commands::current_monitor,
-      #[cfg(desktop)] desktop_commands::primary_monitor,
       #[cfg(desktop)] desktop_commands::monitor_from_point,
-      #[cfg(desktop)] desktop_commands::available_monitors,
       #[cfg(desktop)] desktop_commands::cursor_position,
       #[cfg(desktop)] desktop_commands::is_always_on_top,
-      // setters
       #[cfg(desktop)] desktop_commands::center,
       #[cfg(desktop)] desktop_commands::request_user_attention,
       #[cfg(desktop)] desktop_commands::set_maximizable,

@@ -19,9 +19,27 @@ pub use builders::*;
 pub use menu::{HELP_SUBMENU_ID, WINDOW_SUBMENU_ID};
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(target_env = "ohos", desktop))]
+use crate::sealed::ManagerBase;
 use crate::{image::Image, AppHandle, Runtime};
 pub use muda::MenuId;
 
+// On OHOS, `run_on_main_thread` + `rx.recv()` deadlocks (ohos-constraints §1.2).
+// The OHOS muda/tray backends are safe to call from any non-main thread, so the
+// closure executes inline on the calling thread. `self_.clone()` is kept (cheap
+// Arc bump) because the closure signature takes owned `Self`. Result wrapped in
+// `Ok` so both arms yield `Result<T, Error>` and call-site `?`/`.map_err` chains
+// compile unchanged. Non-OHOS behavior is byte-for-byte unchanged.
+#[cfg(target_env = "ohos")]
+macro_rules! run_item_main_thread {
+  ($self:ident, $ex:expr) => {{
+    let self_ = $self.clone();
+    let f = $ex;
+    Ok::<_, crate::Error>(f(self_))
+  }};
+}
+
+#[cfg(not(target_env = "ohos"))]
 macro_rules! run_item_main_thread {
   ($self:ident, $ex:expr) => {{
     use std::sync::mpsc::channel;
@@ -778,5 +796,17 @@ pub(crate) fn map_to_menu_theme(theme: tauri_utils::Theme) -> muda::MenuTheme {
     tauri_utils::Theme::Light => muda::MenuTheme::Light,
     tauri_utils::Theme::Dark => muda::MenuTheme::Dark,
     _ => muda::MenuTheme::Auto,
+  }
+}
+
+#[cfg(all(target_env = "ohos", desktop))]
+fn auto_refresh_menubar<R: Runtime>(app_handle: &AppHandle<R>) {
+  for window in app_handle.manager().windows().values() {
+    if let Some(wm) = window.menu_lock().as_ref() {
+      wm.menu.refresh_menubar(window.label()).ok();
+    } else if let Some(menu) = app_handle.menu() {
+      // Fallback: if window has no menu, use app-level menu
+      menu.refresh_menubar(window.label()).ok();
+    }
   }
 }

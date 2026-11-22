@@ -84,18 +84,18 @@ specta = { version = "^2.0.0-rc.16", optional = true, default-features = false, 
 # WARNING: cookie::Cookie is re-exported so bumping this is a breaking change, documented to be done as a minor bump
 cookie = "0.18"
 
-# desktop
-[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "windows", target_os = "macos"))'.dependencies]
-muda = { version = "0.17", default-features = false, features = [
+# desktop (exclude ohos)
+[target.'cfg(all(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "windows", target_os = "macos"), not(target_env = "ohos")))'.dependencies]
+muda = { version = "0.19.1", default-features = false, features = [
   "serde",
   "gtk",
 ] }
-tray-icon = { version = "0.22", default-features = false, features = [
+tray-icon = { version = "0.24.0", default-features = false, features = [
   "serde",
 ], optional = true }
 
 # linux
-[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+[target.'cfg(all(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"), not(target_env = "ohos")))'.dependencies]
 gtk = { version = "0.18", features = ["v3_24"] }
 webkit2gtk = { version = "2", features = ["v2_40"], optional = true }
 
@@ -140,7 +140,7 @@ windows = { version = "0.61", features = [
 ] }
 
 # mobile
-[target.'cfg(any(target_os = "android", all(target_vendor = "apple", not(target_os = "macos"))))'.dependencies]
+[target.'cfg(any(target_os = "android", target_env = "ohos", all(target_vendor = "apple", not(target_os = "macos"))))'.dependencies]
 bytes = { version = "1", features = ["serde"] }
 reqwest = { version = "0.13", default-features = false, features = [
   "json",
@@ -149,6 +149,24 @@ reqwest = { version = "0.13", default-features = false, features = [
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
 ], optional = true }
+
+# openharmony
+[target.'cfg(target_env = "ohos")'.dependencies]
+muda = { version = "0.19.1", default-features = false, features = [
+  "serde",
+] }
+tray-icon = { version = "0.24.0", default-features = false, features = [
+  "serde",
+], optional = true }
+openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }
+openharmony-ability-derive = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }
+openharmony-ability-plugin-menu = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }
+openharmony-ability-plugin-window = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }
+openharmony-ability-plugin-app-control = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }
+napi-ohos = "1.2"
+napi-derive-ohos = "1.2"
+futures-executor = "0.3"
+base64 = "0.22"
 
 # android
 [target.'cfg(target_os = "android")'.dependencies]

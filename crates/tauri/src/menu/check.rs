@@ -101,22 +101,29 @@ impl<R: Runtime> CheckMenuItem<R> {
   /// Set the text for this menu item. `text` could optionally contain
   /// an `&` before a character to assign this character as the mnemonic
   /// for this menu item. To display a `&` without assigning a mnemenonic, use `&&`.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony**: `&` mnemonics are not supported; the `&` characters are
+  ///   silently removed from the displayed text.
   pub fn set_text<S: AsRef<str>>(&self, text: S) -> crate::Result<()> {
     let text = text.as_ref().to_string();
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_text(text))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_text(text))?;
+    Ok(())
   }
 
-  /// Get whether this menu item is enabled or not.
+  /// Get whether this check menu item is enabled.
   pub fn is_enabled(&self) -> crate::Result<bool> {
     run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().is_enabled())
   }
 
-  /// Enable or disable this menu item.
+  /// Set whether this check menu item is enabled.
   pub fn set_enabled(&self, enabled: bool) -> crate::Result<()> {
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_enabled(enabled))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_enabled(enabled))?;
+    Ok(())
   }
 
-  /// Set this menu item accelerator.
+  /// Set the accelerator for this check menu item.
   pub fn set_accelerator<S: AsRef<str>>(&self, accelerator: Option<S>) -> crate::Result<()> {
     let accel = accelerator.and_then(|s| s.as_ref().parse().ok());
     run_item_main_thread!(self, |self_: Self| {
@@ -125,13 +132,14 @@ impl<R: Runtime> CheckMenuItem<R> {
     .map_err(Into::into)
   }
 
-  /// Get whether this check menu item is checked or not.
+  /// Get whether this check menu item is checked.
   pub fn is_checked(&self) -> crate::Result<bool> {
     run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().is_checked())
   }
 
-  /// Check or Uncheck this check menu item.
+  /// Set whether this check menu item is checked.
   pub fn set_checked(&self, checked: bool) -> crate::Result<()> {
-    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_checked(checked))
+    run_item_main_thread!(self, |self_: Self| (*self_.0).as_ref().set_checked(checked))?;
+    Ok(())
   }
 }

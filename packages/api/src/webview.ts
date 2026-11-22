@@ -421,6 +421,20 @@ class Webview {
     ).then((s) => new PhysicalSize(s))
   }
 
+  // Getters (platform notes)
+  //
+  // OpenHarmony: `position()` / `size()` are cache-backed. For a natural-layout
+  // webview (created without bounds) the cache holds the upstream
+  // WebViewAttributes::default() 200×200 placeholder — never the live rendered
+  // geometry, which is container-driven and not reported back by the platform.
+  // After a partial `setSize()` / `setPosition()`, the components the call did
+  // not set keep their last cached value: the "unspecified" sentinels
+  // (i32::MIN-derived values) sent on the wire for those components are
+  // screened out by the wry-side bounds-cache merge and are never observable
+  // through these getters (issue Eulogizethesun/tauri#245). Within one dpi
+  // variant the merge is per-component; a partial write in a different variant
+  // keeps the cached axis wholesale.
+
   // Setters
 
   /**
@@ -587,7 +601,13 @@ class Webview {
    * @returns A promise indicating the success or failure of the operation.
    */
   async clearAllBrowsingData(): Promise<void> {
-    return invoke('plugin:webview|clear_all_browsing_data')
+    // `label` for cross-webview routing — same rationale as setBackgroundColor
+    // (without it the backend falls back to the invoking webview, so
+    // `Webview.getByLabel(x).clearAllBrowsingData()` would clear the caller's
+    // data instead of x's).
+    return invoke('plugin:webview|clear_all_browsing_data', {
+      label: this.label
+    })
   }
 
   /**
@@ -599,13 +619,21 @@ class Webview {
    * - **Windows**:
    *   - On Windows 7, transparency is not supported and the alpha value will be ignored.
    *   - On Windows higher than 7: translucent colors are not supported so any alpha value other than `0` will be replaced by `255`
+   * - **OpenHarmony**: The Web component only respects `backgroundColor` at creation time.
+   *   Runtime updates via this API are a no-op for the WebView itself.
+   *   On API 20+ devices, the window container color can be updated separately via `Window.setBackgroundColor`.
    *
    * @returns A promise indicating the success or failure of the operation.
    *
    * @since 2.1.0
    */
   async setBackgroundColor(color: Color | null): Promise<void> {
-    return invoke('plugin:webview|set_webview_background_color', { color })
+    // `label` for cross-webview routing — same rationale as Window.setBackgroundColor
+    // (without it the backend falls back to the invoking webview).
+    return invoke('plugin:webview|set_webview_background_color', {
+      label: this.label,
+      value: color
+    })
   }
 
   // Listeners

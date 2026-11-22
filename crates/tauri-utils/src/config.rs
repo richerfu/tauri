@@ -1685,6 +1685,9 @@ pub struct BundleConfig {
   /// Android configuration.
   #[serde(default)]
   pub android: AndroidConfig,
+  /// OpenHarmony configuration.
+  #[serde(default)]
+  pub open_harmony: OpenHarmonyConfig,
 }
 
 /// A tuple struct of RGBA colors. Each value has minimum of 0 and maximum of 255.
@@ -2216,7 +2219,7 @@ pub struct WindowConfig {
   )]
   pub disable_input_accessory_view: bool,
   ///
-  /// Set a custom path for the webview's data directory (localStorage, cache, etc.) **relative to [`appDataDir()`]/${label}**.
+  /// Set a custom path for the webview's data directory (localStorage, cache, etc.) **relative to `appDataDir()`/${label}**.
   ///
   /// To set absolute paths, use [`WebviewWindowBuilder::data_directory`](https://docs.rs/tauri/2/tauri/webview/struct.WebviewWindowBuilder.html#method.data_directory)
   ///
@@ -3248,6 +3251,78 @@ fn default_min_sdk_version() -> u32 {
   24
 }
 
+/// General configuration for the OpenHarmony target.
+#[skip_serializing_none]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenHarmonyConfig {
+  /// The version code of the application.
+  ///
+  /// By default we use your configured version and perform the following math:
+  /// versionCode = version.major * 1000000 + version.minor * 1000 + version.patch
+  #[serde(alias = "version-code")]
+  pub version_code: Option<u32>,
+
+  /// The device types supported by the application, split per device form.
+  /// `mobile` feeds `cfg(mobile)` (defaults to `["phone", "tablet"]`),
+  /// `desktop` feeds `cfg(desktop)` (defaults to `["2in1"]`).
+  #[serde(alias = "device-types", default)]
+  pub device_types: OpenHarmonyDeviceTypes,
+
+  /// Marks the app's ability as continuable (app continuation / task handoff).
+  ///
+  /// When `Some(true)`, the CLI writes `continuable: true` plus `continueType`
+  /// into each entry module.json5's abilities entry at build time (same
+  /// injection point as `deviceTypes`). Any other value (`None` or
+  /// `Some(false)`) removes both keys from module.json5, so toggling back to
+  /// disabled also takes effect on rebuild — keys hand-added to module.json5
+  /// are stripped on the next build. Requires `continueType` matching between
+  /// devices.
+  #[serde(alias = "continuable")]
+  pub continuable: Option<bool>,
+
+  /// The continuation type identifiers used to match source/target devices for
+  /// app continuation (module.json5 `continueType`). Only written when
+  /// `continuable` is `Some(true)`; defaults to `[identifier]` when omitted.
+  #[serde(alias = "continue-type")]
+  pub continue_type: Option<Vec<String>>,
+}
+
+/// Per-form OHOS device types. Each list drives one Entry HAP's `module.json5`
+/// `deviceTypes` and the `cfg(mobile)`/`cfg(desktop)` compile of its `.so`.
+///
+/// When `bundle.openHarmony.deviceTypes` is **omitted**, both lists default
+/// (`mobile = ["phone","tablet"]`, `desktop = ["2in1"]`). When **present**,
+/// both `mobile` and `desktop` are required and must be non-empty — you cannot
+/// configure only one form.
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenHarmonyDeviceTypes {
+  /// Devices for the mobile form (e.g. `["phone", "tablet"]`).
+  pub mobile: Vec<String>,
+  /// Devices for the desktop form (e.g. `["2in1"]`).
+  pub desktop: Vec<String>,
+}
+
+impl Default for OpenHarmonyDeviceTypes {
+  fn default() -> Self {
+    Self {
+      mobile: default_mobile_device_types(),
+      desktop: default_desktop_device_types(),
+    }
+  }
+}
+
+fn default_mobile_device_types() -> Vec<String> {
+  vec!["phone".into(), "tablet".into()]
+}
+
+fn default_desktop_device_types() -> Vec<String> {
+  vec!["2in1".into()]
+}
+
 /// Defines the URL or assets to embed in the application.
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -4035,6 +4110,7 @@ mod build {
       let macos = quote!(Default::default());
       let ios = quote!(Default::default());
       let android = quote!(Default::default());
+      let open_harmony = quote!(Default::default());
 
       literal_struct!(
         tokens,
@@ -4059,7 +4135,8 @@ mod build {
         linux,
         macos,
         ios,
-        android
+        android,
+        open_harmony
       );
     }
   }
@@ -4500,6 +4577,7 @@ mod test {
       windows: Default::default(),
       ios: Default::default(),
       android: Default::default(),
+      open_harmony: Default::default(),
     };
 
     // test the configs

@@ -33,12 +33,27 @@ pub fn plugin_config<T: DeserializeOwned>(name: &str) -> Option<T> {
   }
 }
 
+/// Emits the `desktop` and `mobile` cfg aliases for the crate currently being built.
+///
+/// Mobile detection is OHOS-aware: on OpenHarmony the device form factor from
+/// `OHOS_DEVICE_TYPE` decides (see [`tauri_utils::platform::is_mobile_target`]).
+///
+/// Plugins should call this from their `build.rs` instead of keeping a local
+/// copy of the alias logic — a drifting copy can emit conflicting cfgs within
+/// the same build.
+pub fn cfg_aliases() {
+  let mobile = tauri_utils::platform::is_mobile_target();
+  cfg_alias("desktop", !mobile);
+  cfg_alias("mobile", mobile);
+}
+
 pub struct Builder<'a> {
   commands: &'a [&'static str],
   global_scope_schema: Option<schemars::schema::RootSchema>,
   global_api_script_path: Option<PathBuf>,
   android_path: Option<PathBuf>,
   ios_path: Option<PathBuf>,
+  ohos_path: Option<PathBuf>,
 }
 
 impl<'a> Builder<'a> {
@@ -49,6 +64,7 @@ impl<'a> Builder<'a> {
       global_api_script_path: None,
       android_path: None,
       ios_path: None,
+      ohos_path: None,
     }
   }
 
@@ -75,6 +91,12 @@ impl<'a> Builder<'a> {
   /// Sets the iOS project path.
   pub fn ios_path<P: Into<PathBuf>>(mut self, ios_path: P) -> Self {
     self.ios_path.replace(ios_path.into());
+    self
+  }
+
+  /// Sets the OpenHarmony project path.
+  pub fn ohos_path<P: Into<PathBuf>>(mut self, ohos_path: P) -> Self {
+    self.ohos_path.replace(ohos_path.into());
     self
   }
 
@@ -147,7 +169,7 @@ impl<'a> Builder<'a> {
       tauri_utils::plugin::define_global_api_script_path(&path);
     }
 
-    mobile::setup(self.android_path, self.ios_path)?;
+    mobile::setup(self.android_path, self.ios_path, self.ohos_path)?;
 
     Ok(())
   }

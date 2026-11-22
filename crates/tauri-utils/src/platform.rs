@@ -37,6 +37,8 @@ pub enum Target {
   /// iOS.
   #[serde(rename = "iOS")]
   Ios,
+  /// OpenHarmony.
+  OpenHarmony,
 }
 
 impl Display for Target {
@@ -50,6 +52,7 @@ impl Display for Target {
         Self::Linux => "linux",
         Self::Android => "android",
         Self::Ios => "iOS",
+        Self::OpenHarmony => "open-harmony",
       }
     )
   }
@@ -66,6 +69,8 @@ impl Target {
       Self::Android
     } else if target.contains("ios") {
       Self::Ios
+    } else if target.contains("ohos") {
+      Self::OpenHarmony
     } else {
       Self::Linux
     }
@@ -81,6 +86,8 @@ impl Target {
       Self::Ios
     } else if cfg!(target_os = "android") {
       Self::Android
+    } else if cfg!(target_env = "ohos") {
+      Self::OpenHarmony
     } else {
       Self::Linux
     }
@@ -88,12 +95,112 @@ impl Target {
 
   /// Whether the target is mobile or not.
   pub fn is_mobile(&self) -> bool {
-    matches!(self, Target::Android | Target::Ios)
+    matches!(self, Target::Android | Target::Ios | Target::OpenHarmony)
   }
 
   /// Whether the target is desktop or not.
   pub fn is_desktop(&self) -> bool {
     !self.is_mobile()
+  }
+}
+
+/// Whether the OpenHarmony build targets the desktop (2in1) device form,
+/// resolved from the `OHOS_DEVICE_TYPE` environment variable.
+///
+/// Only meaningful in a build-time context (build scripts and proc macros of
+/// the crate being compiled), where the variable — set by the Tauri CLI's
+/// `ohos dev` / `ohos build` commands and inherited by cargo — selects the
+/// `desktop`/`mobile` cfg aliases and the active entry module. At app runtime
+/// the variable is not set and the mobile form is assumed.
+///
+/// `desktop` selects the desktop form; `mobile`, an unset or an empty variable
+/// selects the mobile form. Any other value — typically a typo — falls back to
+/// the mobile form with a warning on stderr, matching how the cfg aliases
+/// treat it.
+pub fn ohos_is_desktop() -> bool {
+  match std::env::var("OHOS_DEVICE_TYPE") {
+    Ok(value) if value == "desktop" => true,
+    Ok(value) if value == "mobile" || value.is_empty() => false,
+    Ok(value) => {
+      eprintln!(
+        "warning: unrecognized OHOS_DEVICE_TYPE `{value}`, expected `mobile` or `desktop`; building for the mobile form"
+      );
+      false
+    }
+    Err(_) => false,
+  }
+}
+
+/// Whether the crate currently being compiled targets a mobile platform.
+///
+/// For use in build scripts (and other build-time code such as proc macros),
+/// where Cargo exposes the target through the `CARGO_CFG_TARGET_OS` and
+/// `CARGO_CFG_TARGET_ENV` environment variables: iOS and Android are always
+/// mobile, and OpenHarmony follows the device form selected by
+/// `OHOS_DEVICE_TYPE` (see [`ohos_is_desktop`]).
+///
+/// For OpenHarmony targets this also emits
+/// `cargo:rerun-if-env-changed=OHOS_DEVICE_TYPE`, so the crate rebuilds when
+/// the device form changes — build scripts that call this must not print to
+/// stdout, as cargo parses it for directives.
+///
+/// Unlike [`Target::is_mobile`], which reflects the running binary, this
+/// resolves the target *being built* and can therefore distinguish the
+/// OpenHarmony device forms.
+pub fn is_mobile_target() -> bool {
+  let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+  if target_env == "ohos" {
+    println!("cargo:rerun-if-env-changed=OHOS_DEVICE_TYPE");
+    !ohos_is_desktop()
+  } else {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    target_os == "ios" || target_os == "android"
+  }
+}
+
+#[cfg(test)]
+mod ohos_device_form_tests {
+  use super::*;
+  use serial_test::serial;
+
+  #[test]
+  #[serial]
+  fn desktop_form_only_for_desktop_value() {
+    std::env::set_var("OHOS_DEVICE_TYPE", "desktop");
+    assert!(ohos_is_desktop());
+    std::env::remove_var("OHOS_DEVICE_TYPE");
+  }
+
+  #[test]
+  #[serial]
+  fn mobile_form_for_mobile_value() {
+    std::env::set_var("OHOS_DEVICE_TYPE", "mobile");
+    assert!(!ohos_is_desktop());
+    std::env::remove_var("OHOS_DEVICE_TYPE");
+  }
+
+  #[test]
+  #[serial]
+  fn unset_defaults_to_mobile() {
+    std::env::remove_var("OHOS_DEVICE_TYPE");
+    assert!(!ohos_is_desktop());
+  }
+
+  #[test]
+  #[serial]
+  fn empty_value_defaults_to_mobile() {
+    std::env::set_var("OHOS_DEVICE_TYPE", "");
+    assert!(!ohos_is_desktop());
+    std::env::remove_var("OHOS_DEVICE_TYPE");
+  }
+
+  #[test]
+  #[serial]
+  fn typo_falls_back_to_mobile() {
+    // case-sensitive: "Desktop" is not the desktop form
+    std::env::set_var("OHOS_DEVICE_TYPE", "Desktop");
+    assert!(!ohos_is_desktop());
+    std::env::remove_var("OHOS_DEVICE_TYPE");
   }
 }
 
@@ -211,6 +318,10 @@ pub fn target_triple() -> crate::Result<String> {
 
   let os = if cfg!(target_os = "macos") || cfg!(target_os = "freebsd") {
     String::from(os)
+  } else if cfg!(target_env = "ohos") {
+    // OpenHarmony targets (e.g. `aarch64-unknown-linux-ohos`) set target_os =
+    // "linux" with the "ohos" env instead of gnu/musl/msvc.
+    format!("{os}-ohos")
   } else {
     let env = if cfg!(target_env = "gnu") {
       "gnu"
@@ -304,7 +415,7 @@ fn resource_dir_from<P: AsRef<std::path::Path>>(
   #[allow(unused_mut, unused_assignments)]
   let mut res = Err(crate::Error::UnsupportedPlatform);
 
-  #[cfg(target_os = "linux")]
+  #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
   {
     // (canonicalize checks for existence, so there's no need for an extra check)
     res = if let Ok(bundle_dir) = exe_dir
@@ -386,6 +497,7 @@ mod build {
         Self::Windows => quote! { #prefix::Windows },
         Self::Android => quote! { #prefix::Android },
         Self::Ios => quote! { #prefix::Ios },
+        Self::OpenHarmony => quote! { #prefix::OpenHarmony },
       });
     }
   }
@@ -426,7 +538,7 @@ mod tests {
     let resource_dir = super::resource_dir_from(&path, &package_info, &env);
     #[cfg(target_os = "macos")]
     assert!(resource_dir.is_err());
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     assert_eq!(resource_dir.unwrap(), PathBuf::from("/usr/lib/MyApp"));
     #[cfg(windows)]
     assert_eq!(resource_dir.unwrap(), path.parent().unwrap());

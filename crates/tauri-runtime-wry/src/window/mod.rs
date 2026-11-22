@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-#[cfg(any(
-  target_os = "linux",
-  target_os = "dragonfly",
-  target_os = "freebsd",
-  target_os = "netbsd",
-  target_os = "openbsd"
+#[cfg(all(
+  any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+  ),
+  not(target_env = "ohos")
 ))]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -23,6 +26,10 @@ pub trait WindowExt {
   /// ## Platform-specific:
   ///
   /// - **Android / iOS**: Unsupported.
+  /// - **OpenHarmony**: Unsupported, returns an error (#225 -- the dispatcher
+  ///   fails early instead of dispatching the message: pre-fix the OHOS arm
+  ///   received it and no-op'd (tao has no `set_enabled`; nothing errored
+  ///   and nothing was discarded)).
   fn set_enabled(&self, enabled: bool);
 
   /// Whether the window is enabled or disabled.
@@ -30,6 +37,8 @@ pub trait WindowExt {
   /// ## Platform-specific:
   ///
   /// - **Android / iOS**: Unsupported, always returns `true`.
+  /// - **OpenHarmony**: Unsupported, always returns `true` (no system
+  ///   enabled/disabled state to query).
   fn is_enabled(&self) -> bool;
 
   /// Center the window
@@ -51,7 +60,7 @@ pub trait WindowExt {
   );
 }
 
-#[cfg(mobile)]
+#[cfg(any(mobile, target_env = "ohos"))]
 impl WindowExt for tao::window::Window {
   fn set_enabled(&self, _: bool) {}
   fn is_enabled(&self) -> bool {
@@ -59,6 +68,7 @@ impl WindowExt for tao::window::Window {
   }
 }
 
+#[allow(dead_code)]
 pub fn calculate_window_center_position(
   window_size: tao::dpi::PhysicalSize<u32>,
   target_monitor: tao::monitor::MonitorHandle,

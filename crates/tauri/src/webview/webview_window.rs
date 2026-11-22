@@ -25,6 +25,8 @@ use crate::{
   runtime::{window::CursorIcon, UserAttentionType},
 };
 use tauri_runtime::webview::NewWindowFeatures;
+#[cfg(target_env = "ohos")]
+use tauri_runtime::WindowDispatch;
 use tauri_utils::config::{BackgroundThrottlingPolicy, Color, WebviewUrl, WindowConfig};
 use url::Url;
 
@@ -466,6 +468,7 @@ impl<'a, R: Runtime, M: Manager<R>> WebviewWindowBuilder<'a, R, M> {
   /// ## Platform-specific
   ///
   /// - **iOS / Android:** Unsupported.
+  /// - **OHOS:** Unsupported — the working-area clamp is silently skipped.
   #[must_use]
   pub fn prevent_overflow(mut self) -> Self {
     self.window_builder = self.window_builder.prevent_overflow();
@@ -480,6 +483,7 @@ impl<'a, R: Runtime, M: Manager<R>> WebviewWindowBuilder<'a, R, M> {
   /// ## Platform-specific
   ///
   /// - **iOS / Android:** Unsupported.
+  /// - **OHOS:** Unsupported — the working-area clamp is silently skipped.
   #[must_use]
   pub fn prevent_overflow_with_margin(mut self, margin: impl Into<Size>) -> Self {
     self.window_builder = self.window_builder.prevent_overflow_with_margin(margin);
@@ -684,12 +688,15 @@ impl<'a, R: Runtime, M: Manager<R>> WebviewWindowBuilder<'a, R, M> {
   /// Sets the window to be created transient for parent.
   ///
   /// See <https://docs.gtk.org/gtk3/method.Window.set_transient_for.html>
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn transient_for(mut self, parent: &WebviewWindow<R>) -> crate::Result<Self> {
     self.window_builder = self.window_builder.transient_for(&parent.window)?;
@@ -699,12 +706,15 @@ impl<'a, R: Runtime, M: Manager<R>> WebviewWindowBuilder<'a, R, M> {
   /// Sets the window to be created transient for parent.
   ///
   /// See <https://docs.gtk.org/gtk3/method.Window.set_transient_for.html>
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   #[must_use]
   pub fn transient_for_raw(mut self, parent: &impl gtk::glib::IsA<gtk::Window>) -> Self {
@@ -913,9 +923,9 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
   /// ## Platform-specific
   ///
   /// - **Windows:** scripts are always added to subframes.
-  /// - **Android:** When [addDocumentStartJavaScript] is not supported,
+  /// - **Android:** When `addDocumentStartJavaScript` is not supported,
   ///   we prepend initialization scripts to each HTML head (implementation only supported on custom protocol URLs).
-  ///   For remote URLs, we use [onPageStarted] which is not guaranteed to run before other scripts.
+  ///   For remote URLs, we use `onPageStarted` which is not guaranteed to run before other scripts.
   ///
   /// # Examples
   ///
@@ -955,9 +965,9 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
   ///
   /// ## Platform-specific
   ///
-  /// - **Android:** When [addDocumentStartJavaScript] is not supported,
+  /// - **Android:** When `addDocumentStartJavaScript` is not supported,
   ///   we prepend initialization scripts to each HTML head (implementation only supported on custom protocol URLs).
-  ///   For remote URLs, we use [onPageStarted] which is not guaranteed to run before other scripts.
+  ///   For remote URLs, we use `onPageStarted` which is not guaranteed to run before other scripts.
   ///
   /// # Examples
   ///
@@ -1031,9 +1041,24 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
   ///
   /// **macOS** doesn't provide such method and is always enabled by default,
   /// but you still need to add menu item accelerators to use shortcuts.
+  ///
+  /// **OHOS** is enabled by default (ArkWeb native clipboard shortcuts);
+  /// use `disable_clipboard_access` to intercept keyboard Ctrl+C/X/V/A/Z/Y.
   #[must_use]
   pub fn enable_clipboard_access(mut self) -> Self {
     self.webview_builder = self.webview_builder.enable_clipboard_access();
+    self
+  }
+
+  /// Disables clipboard access for the page.
+  ///
+  /// This is the default on **Linux** and **Windows**. On **OHOS** the default
+  /// is enabled (ArkWeb native clipboard shortcuts); calling this intercepts
+  /// keyboard Ctrl+C/X/V/A/Z/Y so they never reach the webview.
+  #[cfg(target_env = "ohos")]
+  #[must_use]
+  pub fn disable_clipboard_access(mut self) -> Self {
+    self.webview_builder = self.webview_builder.disable_clipboard_access();
     self
   }
 
@@ -1145,6 +1170,18 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
   #[must_use]
   pub fn use_https_scheme(mut self, enabled: bool) -> Self {
     self.webview_builder = self.webview_builder.use_https_scheme(enabled);
+    self
+  }
+
+  /// Sets whether to render a transparent drag-drop overlay (OHOS-only).
+  ///
+  /// When enabled, a transparent Stack with `HitTestMode.Transparent` is rendered
+  /// above the Web component to receive ArkUI drag events. Pointer events pass
+  /// through to the Web. See `WebviewBuilder::drag_drop_overlay`.
+  #[cfg(target_env = "ohos")]
+  #[must_use]
+  pub fn drag_drop_overlay(mut self, enabled: bool) -> Self {
+    self.webview_builder = self.webview_builder.drag_drop_overlay(enabled);
     self
   }
 
@@ -1322,7 +1359,8 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
       target_os = "freebsd",
       target_os = "netbsd",
       target_os = "openbsd",
-    )
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn with_related_view(mut self, related_view: webkit2gtk::WebView) -> Self {
     self.webview_builder = self.webview_builder.with_related_view(related_view);
@@ -1344,14 +1382,17 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
 
   /// Set the window features.
   /// Useful if you need to share the same window features, for instance when using the [`Self::on_new_window`].
-  #[cfg(any(
-    target_os = "macos",
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "macos",
+      windows,
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn window_features(mut self, features: NewWindowFeatures) -> Self {
     if let Some(position) = features.position() {
@@ -1384,7 +1425,8 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
         target_os = "freebsd",
         target_os = "netbsd",
         target_os = "openbsd",
-      )
+      ),
+      not(target_env = "ohos")
     ))]
     {
       self.webview_builder = self
@@ -1410,6 +1452,52 @@ impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
   pub fn created_by_activity_name<S: Into<String>>(mut self, class_name: S) -> Self {
     self.window_builder = self.window_builder.created_by_activity_name(class_name);
     self
+  }
+}
+
+/// OpenHarmony specific APIs
+#[cfg(target_env = "ohos")]
+impl<R: Runtime, M: Manager<R>> WebviewWindowBuilder<'_, R, M> {
+  /// Sets the OHOS window kind for this window.
+  ///
+  /// - `UIAbility`: a window backed by its own UIAbility instance. The first one (windowId=0) reuses the
+  ///   existing container; subsequent ones start a new EntryAbility instance via
+  ///   `context.startAbility` (requires `launchType: "specified"` + AbilityStage
+  ///   `onAcceptWant` routing (tauri-window-N keys) in module.json5: the spawn
+  ///   want carries a unique `tauri_window_id`, which onAcceptWant maps to the
+  ///   `tauri-window-<id>` instance key so AMS starts a new instance; a bare
+  ///   want is routed to the main instance instead).
+  /// - `SubWindow`: Application sub-window created via `windowStage.createSubWindow`,
+  ///   living inside this application's window tree (not the OS-wide floating
+  ///   window type `WindowType.TYPE_FLOAT`).
+  ///
+  /// Default when not specified: the first window of the process is
+  /// `UIAbility`, any later window is `SubWindow`. Use `SubWindow` for
+  /// sub-windows.
+  pub fn ohos_window_kind(mut self, kind: crate::ohos::OHOSWindowKind) -> Self {
+    self.window_builder = self.window_builder.ohos_window_kind(kind);
+    self
+  }
+}
+
+#[cfg(target_env = "ohos")]
+impl<R: Runtime> WebviewWindow<R> {
+  /// Returns the OHOS OS-level window ID (0 for main UIAbility window, >0 for
+  /// SubWindow sub-windows / subsequent UIAbility instances).
+  ///
+  /// Exposed so application code (e.g. close_all_test_windows) can call
+  /// openharmony-ability's `destroy_window(id)` to actually destroy the system
+  /// window — tao's `Window::close` is a no-op on OHOS and does not call
+  /// ArkTS `destroyWindow()`, so `WebviewWindow::close()` alone leaves the
+  /// system window visible on screen.
+  pub fn ohos_window_id(&self) -> Option<i64> {
+    self
+      .window
+      .window
+      .dispatcher
+      .ohos_window_id()
+      .ok()
+      .flatten()
   }
 }
 
@@ -1654,7 +1742,9 @@ impl<R: Runtime> WebviewWindow<R> {
     self.window.show_menu()
   }
 
-  /// Shows the window menu.
+  /// Returns whether the window menu is visible.
+  ///
+  /// See [`Window::is_menu_visible`] for platform-specific behavior.
   pub fn is_menu_visible(&self) -> crate::Result<bool> {
     self.window.is_menu_visible()
   }
@@ -1833,12 +1923,15 @@ impl<R: Runtime> WebviewWindow<R> {
   /// Returns the `ApplicationWindow` from gtk crate that is used by this window.
   ///
   /// Note that this type can only be used on the main thread.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn gtk_window(&self) -> crate::Result<gtk::ApplicationWindow> {
     self.window.gtk_window()
@@ -1847,12 +1940,15 @@ impl<R: Runtime> WebviewWindow<R> {
   /// Returns the vertical [`gtk::Box`] that is added by default as the sole child of this window.
   ///
   /// Note that this type can only be used on the main thread.
-  #[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+  #[cfg(all(
+    any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd",
+    ),
+    not(target_env = "ohos")
   ))]
   pub fn default_vbox(&self) -> crate::Result<gtk::Box> {
     self.window.default_vbox()
@@ -1923,6 +2019,14 @@ impl<R: Runtime> WebviewWindow<R> {
   ///
   /// - **macOS:** Disables the "zoom" button in the window titlebar, which is also used to enter fullscreen mode.
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's three decoration buttons
+  ///   are OS-managed (`@ohos.window` has no API for these operation-level
+  ///   flags: per-button visibility via `setWindowTitleButtonVisible` (API
+  ///   14+) and style injection via `setDecorButtonStyle` exist, but neither
+  ///   disables the operations themselves), so calling this on the main
+  ///   window returns an `NotSupported` error (issue
+  ///   Eulogizethesun/tauri#238). Sub-windows (float/sub-window kind)
+  ///   support the flag.
   pub fn set_maximizable(&self, maximizable: bool) -> crate::Result<()> {
     self.window.set_maximizable(maximizable)
   }
@@ -1932,6 +2036,10 @@ impl<R: Runtime> WebviewWindow<R> {
   /// ## Platform-specific
   ///
   /// - **Linux / iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's decoration buttons are
+  ///   OS-managed, so calling this on the main window returns an
+  ///   `NotSupported` error (issue
+  ///   Eulogizethesun/tauri#238). Sub-windows support the flag.
   pub fn set_minimizable(&self, minimizable: bool) -> crate::Result<()> {
     self.window.set_minimizable(minimizable)
   }
@@ -1943,6 +2051,10 @@ impl<R: Runtime> WebviewWindow<R> {
   /// - **Linux:** "GTK+ will do its best to convince the window manager not to show a close button.
   ///   Depending on the system, this function may not have any effect when called on a window that is already visible"
   /// - **iOS / Android:** Unsupported.
+  /// - **OpenHarmony:** the UIAbility main window's decoration buttons are
+  ///   OS-managed, so calling this on the main window returns an
+  ///   `NotSupported` error (issue
+  ///   Eulogizethesun/tauri#238). Sub-windows support the flag.
   pub fn set_closable(&self, closable: bool) -> crate::Result<()> {
     self.window.set_closable(closable)
   }
@@ -2015,6 +2127,10 @@ impl<R: Runtime> WebviewWindow<R> {
   ///
   /// - **Windows**: If using decorations or shadows, you may want to try this workaround <https://github.com/tauri-apps/tao/issues/72#issuecomment-975607891>
   /// - **Linux**: Unsupported
+  /// - **OpenHarmony:** only `Effect::Blur` and `Effect::Acrylic` are applied;
+  ///   `Mica`/`Tabbed` variants are skipped with an info log, and macOS-specific
+  ///   effects fall back to a basic blur approximation. Requires the window to
+  ///   be `transparent` (see `crates/tauri/src/vibrancy/ohos.rs`).
   pub fn set_effects<E: Into<Option<crate::utils::config::WindowEffectsConfig>>>(
     &self,
     effects: E,
@@ -2191,16 +2307,55 @@ impl<R: Runtime> WebviewWindow<R> {
   }
 
   /// Hide this window.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** kind-split (issue Eulogizethesun/tauri#237, refined
+  ///   by #241 to match the tao T28-4 contract). On a MAIN window there is no
+  ///   hide semantics: per the SDK d.ts `minimize()` has dual semantics by
+  ///   caller type (main window = taskbar minimize, not hide, restored from
+  ///   the dock; sub-window / float = hide, restorable via `showWindow()`
+  ///   since API 9), and UIAbility-level `hideAbility` is out of reach on
+  ///   PC/2in1 -- so this call returns a `NotSupported` error naming
+  ///   OpenHarmony and the window is left untouched. Sub-windows / floating
+  ///   windows hide for real (the SDK `minimize()` is the hide primitive
+  ///   there) and [`Self::show`] restores them -- the former blanket error
+  ///   regressed every sub-window hide. Use [`Self::minimize`] on the main
+  ///   window for taskbar minimization (issue Eulogizethesun/tauri#241).
   pub fn hide(&self) -> crate::Result<()> {
     self.window.hide()
   }
 
-  /// Closes this window. It emits [`crate::RunEvent::CloseRequested`] first like a user-initiated close request so you can intercept it.
+  /// Closes this window. It emits `WindowEvent::CloseRequested` first like a user-initiated close request so you can intercept it.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** a `window.close()` call made by the web page itself
+  ///   (JS) is a no-op on the main window — ArkWeb delivers page close
+  ///   requests through the Web `onWindowExit` event, which the framework
+  ///   only registers for script-opened new-window dialogs (`window.open`
+  ///   targets). This API (and the JS `getCurrentWindow().close()`) does emit
+  ///   `WindowEvent::CloseRequested` and honors `prevent_close`.
   pub fn close(&self) -> crate::Result<()> {
     self.window.close()
   }
 
   /// Destroys this window. Similar to [`Self::close`] but does not emit any events and force close the window instead.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **OpenHarmony:** like on desktop, `destroy` skips
+  ///   `WindowEvent::CloseRequested` and tears the window down
+  ///   directly. For the main window only the Rust-side lifecycle runs — the
+  ///   OS-level ability window is system-managed and an in-app destroy is
+  ///   rejected by the bridge (only sub-windows are destroyed OS-level).
+  ///   When the last window closes, the app cannot be kept alive: the
+  ///   `ExitRequested` event fires after the system has already committed to
+  ///   destroying the UIAbility window stage, so `prevent_exit` cannot revert
+  ///   it (the cancellable exception is the PC / 2-in-1 pre-close probe — see
+  ///   [`crate::ExitRequestApi::prevent_exit`]); there is no "app keeps
+  ///   running with zero windows" form on this platform, and window-level
+  ///   `prevent_close` is the equivalent capability.
   pub fn destroy(&self) -> crate::Result<()> {
     self.window.destroy()
   }
@@ -2290,6 +2445,24 @@ impl<R: Runtime> WebviewWindow<R> {
   }
 }
 
+#[cfg(target_env = "ohos")]
+#[cfg_attr(docsrs, doc(cfg(target_env = "ohos")))]
+impl<R: Runtime> WebviewWindow<R> {
+  /// Create a PDF from the current webview content and save to the given path.
+  ///
+  /// The callback receives `true` on success, `false` on failure.
+  ///
+  /// Only available on OpenHarmony.
+  pub fn create_pdf(
+    &self,
+    path: impl AsRef<std::path::Path>,
+    config: Option<tauri_runtime::PdfConfig>,
+    callback: impl Fn(bool) + Send + 'static,
+  ) -> crate::Result<()> {
+    self.webview.create_pdf(path, config, callback)
+  }
+}
+
 /// Webview APIs.
 impl<R: Runtime> WebviewWindow<R> {
   /// Executes a closure, providing it with the webview handle that is specific to the current platform.
@@ -2309,7 +2482,7 @@ impl<R: Runtime> WebviewWindow<R> {
   ///     .setup(|app| {
   ///       let main_webview = app.get_webview_window("main").unwrap();
   ///       main_webview.with_webview(|webview| {
-  ///         #[cfg(target_os = "linux")]
+  ///         #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
   ///         {
   ///           // see <https://docs.rs/webkit2gtk/2.0.0/webkit2gtk/struct.WebView.html>
   ///           // and <https://docs.rs/webkit2gtk/2.0.0/webkit2gtk/trait.WebViewExt.html>
