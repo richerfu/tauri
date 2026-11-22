@@ -81,6 +81,28 @@ pub fn gen(
   );
   map.insert("ability-dep", ability_dep.as_str());
 
+  // When resolving local packed HARs from `<ability_dir>/dist`, plugin HARs
+  // still declare `"@ohos-rs/ability": "workspace:*"` (and statusbar declares
+  // `"@ohos-rs/ability-plugin-menu": "workspace:*"`). Emit root-level
+  // `overrides` in `gen/ohos/oh-package.json5` so `ohpm install` resolves
+  // those transitive `workspace:*` specs to the exact local HAR files.
+  if let Some(ref dir) = ability_dir {
+    if find_packed_har_in_dist(dir, ABILITY_PACKAGE_NAME).is_some() {
+      let root_ability_override =
+        resolve_ability_dependency(Some(dir), &dest, ABILITY_PACKAGE_NAME, ABILITY_DEFAULT_VERSION);
+      map.insert("root-ability-override", root_ability_override);
+      if find_packed_har_in_dist(dir, "@ohos-rs/ability-plugin-menu").is_some() {
+        let root_menu_override = resolve_ability_dependency(
+          Some(dir),
+          &dest,
+          "@ohos-rs/ability-plugin-menu",
+          ABILITY_DEFAULT_VERSION,
+        );
+        map.insert("root-menu-override", root_menu_override);
+      }
+    }
+  }
+
   for spec in BRIDGE_PLUGINS.iter().filter(|s| s.core) {
     let dep_value = resolve_ability_dependency(
       ability_dir.as_deref(),
