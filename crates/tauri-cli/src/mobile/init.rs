@@ -307,6 +307,7 @@ fn exec(
         super::open_harmony::plugins::update_plugin_configs(&project_dir, &plugin_metadata)?;
       }
       super::open_harmony::plugins::sync_bridge_plugins_for_all_entries(&project_dir)?;
+      super::open_harmony::inject_icons_for_all_entries(&config, &tauri_config, dirs.tauri)?;
 
       app
     }

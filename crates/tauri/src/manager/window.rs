@@ -10,9 +10,10 @@ use std::{
 };
 
 use serde::Serialize;
+#[cfg(not(target_env = "ohos"))]
+use tauri_runtime::window::WindowBuilder;
 use tauri_runtime::{
   dpi::{PhysicalPosition, PhysicalSize},
-  window::WindowBuilder,
   window::{DetachedWindow, DragDropEvent, PendingWindow},
 };
 
@@ -61,12 +62,21 @@ impl<R: Runtime> WindowManager<R> {
 
   pub fn prepare_window(
     &self,
-    mut pending: PendingWindow<EventLoopMessage, R>,
+    #[cfg_attr(target_env = "ohos", allow(unused_mut))] mut pending: PendingWindow<
+      EventLoopMessage,
+      R,
+    >,
   ) -> crate::Result<PendingWindow<EventLoopMessage, R>> {
     if self.windows_lock().contains_key(&pending.label) {
       return Err(crate::Error::WindowLabelAlreadyExists(pending.label));
     }
 
+    // On OpenHarmony, the initial window titlebar icon is provided natively by
+    // the HAP's module.json5 (`layered_image`, injected from `bundle.icon` at
+    // init/build time). Auto-injecting `default_window_icon` (often a 32x32 PNG)
+    // causes a visible post-launch titlebar icon flash via `setMissionWindowIcon`.
+    // Explicit `.icon(...)` calls on WindowBuilder still take effect.
+    #[cfg(not(target_env = "ohos"))]
     if !pending.window_builder.has_icon() {
       if let Some(default_window_icon) = self.default_icon.clone() {
         pending.window_builder = pending.window_builder.icon(default_window_icon.into())?;

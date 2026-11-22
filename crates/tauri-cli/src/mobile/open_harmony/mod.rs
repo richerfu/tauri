@@ -406,96 +406,336 @@ fn inject_resources(
   Ok(())
 }
 
-fn inject_icons(
-  config: &OpenHarmonyConfig,
-  tauri_config: &TauriConfig,
-  tauri_dir: &std::path::Path,
-) -> Result<()> {
-  let icons = &tauri_config.bundle.icon;
-  if icons.is_empty() {
-    return Ok(());
+/// Minimal valid 256x256 opaque white (`#FFFFFFFF`) RGBA PNG used as the
+/// HarmonyOS `layered_image` background layer when an app only supplies
+/// standard desktop icons in `bundle.icon` (no explicit `*-background.png`).
+/// Keeping an opaque background avoids HarmonyOS rendering transparent corners
+/// as black in the launcher squircle and replaces DevEco's default blue tile.
+const FALLBACK_BACKGROUND_PNG: &[u8] = &[
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x06, 0x00, 0x00, 0x00, 0x5c, 0x72, 0xa8,
+  0x66, 0x00, 0x00, 0x02, 0x59, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xd4, 0x31, 0x01, 0x00,
+  0x00, 0x0c, 0xc2, 0x30, 0xfc, 0x9b, 0x06, 0x03, 0x73, 0xb0, 0x44, 0x42, 0x8f, 0xa6, 0xc0, 0x5b,
+  0x91, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0,
+  0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30,
+  0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c,
+  0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03,
+  0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00,
+  0x00, 0x03, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00,
+  0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00,
+  0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00,
+  0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0,
+  0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30,
+  0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03,
+  0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00,
+  0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00,
+  0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00,
+  0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00,
+  0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0,
+  0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30,
+  0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c,
+  0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03,
+  0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00,
+  0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x0c, 0x00,
+  0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00,
+  0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00,
+  0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0,
+  0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30,
+  0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x03,
+  0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00,
+  0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00,
+  0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00,
+  0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00,
+  0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00,
+  0x03, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30,
+  0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c,
+  0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03,
+  0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00,
+  0x00, 0x03, 0x00, 0x0c, 0x00, 0x30, 0x00, 0xc0, 0x00, 0x00, 0x03, 0x00, 0x2e, 0x03, 0xe6, 0x50,
+  0x3b, 0xc5, 0xd1, 0x06, 0x25, 0x07, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42,
+  0x60, 0x82,
+];
+
+fn read_png_dimensions(path: &std::path::Path) -> Option<(u32, u32)> {
+  use std::io::Read;
+  let mut file = std::fs::File::open(path).ok()?;
+  let mut header = [0u8; 24];
+  file.read_exact(&mut header).ok()?;
+  if &header[0..8] != b"\x89PNG\r\n\x1a\n" || &header[12..16] != b"IHDR" {
+    return None;
   }
+  let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]);
+  let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]);
+  Some((width, height))
+}
 
-  let project_dir = config.project_dir();
-  let app_media_dir = project_dir.join("AppScope/resources/base/media");
-  // `entry_media_dir` targets the *active* entry module (entry_{OHOS_DEVICE_TYPE})
-  // via `active_entry_module()`, which reads the env var the CLI set for the
-  // requested form. For `--app`, the per-form loop in `command` re-sets the env
-  // and calls this once per form so both entries get icons.
-  let entry_media_dir = project_dir.join(format!(
-    "{}/src/main/resources/base/media",
-    active_entry_module()
-  ));
+struct ResolvedOhosIcons {
+  foreground: PathBuf,
+  background: Option<PathBuf>,
+  starticon: PathBuf,
+}
 
+fn resolve_ohos_icons(icons: &[String], tauri_dir: &std::path::Path) -> Option<ResolvedOhosIcons> {
   let mut foreground_path: Option<PathBuf> = None;
   let mut background_path: Option<PathBuf> = None;
   let mut starticon_path: Option<PathBuf> = None;
+  let mut best_fallback: Option<(u64, PathBuf)> = None;
 
   for icon in icons {
     let path = PathBuf::from(icon);
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-      continue;
-    };
-    let stem_lower = stem.to_lowercase();
-    let is_ohos_icon = stem_lower.ends_with("-starticon")
-      || stem_lower.ends_with("-foreground")
-      || stem_lower.ends_with("-background");
-    if !is_ohos_icon {
-      continue;
-    }
-    // DevEco's resource compiler expects real PNG data in .png media files.
-    // Reject non-PNG sources instead of misnaming them, which would break HAP packaging.
     let is_png = path
       .extension()
       .and_then(|e| e.to_str())
       .map(|e| e.eq_ignore_ascii_case("png"))
       .unwrap_or(false);
+    let stem_lower = path
+      .file_stem()
+      .and_then(|s| s.to_str())
+      .map(|s| s.to_lowercase())
+      .unwrap_or_default();
+    let is_ohos_icon = stem_lower.ends_with("-starticon")
+      || stem_lower.ends_with("-foreground")
+      || stem_lower.ends_with("-background");
+
     if !is_png {
-      log::warn!(
-        "OHOS icon '{}' is not a PNG file; skipping (DevEco requires PNG)",
-        path.display()
-      );
+      if is_ohos_icon {
+        log::warn!(
+          "OHOS icon '{}' is not a PNG file; skipping (DevEco requires PNG)",
+          path.display()
+        );
+      }
       continue;
     }
+
     let full_path = tauri_dir.join(&path);
+    if !full_path.is_file() {
+      continue;
+    }
+
     if stem_lower.ends_with("-starticon") {
       starticon_path = Some(full_path);
     } else if stem_lower.ends_with("-foreground") {
       foreground_path = Some(full_path);
     } else if stem_lower.ends_with("-background") {
       background_path = Some(full_path);
+    } else if let Some((w, h)) = read_png_dimensions(&full_path) {
+      let area = u64::from(w) * u64::from(h);
+      if best_fallback
+        .as_ref()
+        .map(|(best_area, _)| area > *best_area)
+        .unwrap_or(true)
+      {
+        best_fallback = Some((area, full_path));
+      }
     }
   }
 
-  let (Some(fg), Some(bg)) = (&foreground_path, &background_path) else {
-    log::warn!(
-      "OHOS icon injection skipped: foreground ({}) and background ({}) must both be present in bundle.icon with the -foreground / -background suffix",
-      foreground_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "missing".into()),
-      background_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "missing".into()),
-    );
-    return Ok(());
-  };
+  let fallback_png = best_fallback.map(|(_, p)| p).or_else(|| {
+    let default_icon = tauri_dir.join("icons/icon.png");
+    if default_icon.is_file() && read_png_dimensions(&default_icon).is_some() {
+      Some(default_icon)
+    } else {
+      None
+    }
+  });
 
-  // Copy to AppScope media
+  if let (Some(fg), Some(bg)) = (foreground_path.clone(), background_path.clone()) {
+    let starticon = starticon_path.unwrap_or_else(|| fg.clone());
+    return Some(ResolvedOhosIcons {
+      foreground: fg,
+      background: Some(bg),
+      starticon,
+    });
+  }
+
+  let fg = foreground_path.or(fallback_png)?;
+  let starticon = starticon_path.unwrap_or_else(|| fg.clone());
+  Some(ResolvedOhosIcons {
+    foreground: fg,
+    background: background_path,
+    starticon,
+  })
+}
+
+fn write_icons_to_entries(
+  project_dir: &std::path::Path,
+  entries: &[&str],
+  resolved: &ResolvedOhosIcons,
+) -> Result<()> {
+  let app_media_dir = project_dir.join("AppScope/resources/base/media");
   create_dir_all(&app_media_dir).fs_context(
     "failed to create AppScope media directory",
     app_media_dir.clone(),
   )?;
-  crate::helpers::fs::copy_file(fg, app_media_dir.join("foreground.png"))?;
-  crate::helpers::fs::copy_file(bg, app_media_dir.join("background.png"))?;
+  crate::helpers::fs::copy_file(&resolved.foreground, app_media_dir.join("foreground.png"))?;
+  if let Some(bg) = &resolved.background {
+    crate::helpers::fs::copy_file(bg, app_media_dir.join("background.png"))?;
+  } else {
+    write(app_media_dir.join("background.png"), FALLBACK_BACKGROUND_PNG).fs_context(
+      "failed to write fallback AppScope background icon",
+      app_media_dir.join("background.png"),
+    )?;
+  }
 
-  // Copy to entry media
-  create_dir_all(&entry_media_dir).fs_context(
-    "failed to create entry media directory",
-    entry_media_dir.clone(),
-  )?;
-  crate::helpers::fs::copy_file(fg, entry_media_dir.join("foreground.png"))?;
-  crate::helpers::fs::copy_file(bg, entry_media_dir.join("background.png"))?;
+  for entry in entries {
+    let entry_root = project_dir.join(entry);
+    if !entry_root.is_dir() {
+      continue;
+    }
+    let entry_media_dir = entry_root.join("src/main/resources/base/media");
+    create_dir_all(&entry_media_dir).fs_context(
+      "failed to create entry media directory",
+      entry_media_dir.clone(),
+    )?;
+    crate::helpers::fs::copy_file(&resolved.foreground, entry_media_dir.join("foreground.png"))?;
+    if let Some(bg) = &resolved.background {
+      crate::helpers::fs::copy_file(bg, entry_media_dir.join("background.png"))?;
+    } else {
+      write(
+        entry_media_dir.join("background.png"),
+        FALLBACK_BACKGROUND_PNG,
+      )
+      .fs_context(
+        "failed to write fallback entry background icon",
+        entry_media_dir.join("background.png"),
+      )?;
+    }
+    crate::helpers::fs::copy_file(&resolved.starticon, entry_media_dir.join("startIcon.png"))?;
+  }
 
-  // startIcon: use dedicated *-starticon file if present, otherwise fall back to foreground
-  let starticon_src = starticon_path.as_ref().unwrap_or(fg);
-  crate::helpers::fs::copy_file(starticon_src, entry_media_dir.join("startIcon.png"))?;
-
-  log::info!("OHOS icons injected successfully");
   Ok(())
+}
+
+pub(crate) fn inject_icons(
+  config: &OpenHarmonyConfig,
+  tauri_config: &TauriConfig,
+  tauri_dir: &std::path::Path,
+) -> Result<()> {
+  let Some(resolved) = resolve_ohos_icons(&tauri_config.bundle.icon, tauri_dir) else {
+    log::warn!(
+      "OHOS icon injection skipped: no valid PNG icons found in bundle.icon or icons/icon.png"
+    );
+    return Ok(());
+  };
+
+  let entry = active_entry_module();
+  write_icons_to_entries(&config.project_dir(), &[entry.as_str()], &resolved)?;
+  log::info!(
+    "OHOS icons injected successfully (foreground={})",
+    resolved.foreground.display()
+  );
+  Ok(())
+}
+
+pub(crate) fn inject_icons_for_all_entries(
+  config: &OpenHarmonyConfig,
+  tauri_config: &TauriConfig,
+  tauri_dir: &std::path::Path,
+) -> Result<()> {
+  let Some(resolved) = resolve_ohos_icons(&tauri_config.bundle.icon, tauri_dir) else {
+    log::warn!(
+      "OHOS icon injection skipped during init: no valid PNG icons found in bundle.icon or icons/icon.png"
+    );
+    return Ok(());
+  };
+
+  write_icons_to_entries(
+    &config.project_dir(),
+    &["entry_mobile", "entry_desktop"],
+    &resolved,
+  )?;
+  log::info!(
+    "OHOS icons injected into all entries (foreground={})",
+    resolved.foreground.display()
+  );
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn fake_png_with_size(w: u32, h: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(24);
+    bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&w.to_be_bytes());
+    bytes.extend_from_slice(&h.to_be_bytes());
+    bytes
+  }
+
+  #[test]
+  fn fallback_background_png_has_valid_ihdr() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("bg.png");
+    std::fs::write(&p, FALLBACK_BACKGROUND_PNG).unwrap();
+    assert_eq!(read_png_dimensions(&p), Some((256, 256)));
+  }
+
+  #[test]
+  fn resolve_ohos_icons_prefers_explicit_layered_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    let icons_dir = dir.path().join("icons");
+    create_dir_all(&icons_dir).unwrap();
+    write(icons_dir.join("128x128@2x.png"), fake_png_with_size(256, 256)).unwrap();
+    write(icons_dir.join("app-foreground.png"), fake_png_with_size(1024, 1024)).unwrap();
+    write(icons_dir.join("app-background.png"), fake_png_with_size(1024, 1024)).unwrap();
+    write(icons_dir.join("app-starticon.png"), fake_png_with_size(144, 144)).unwrap();
+
+    let icons = vec![
+      "icons/128x128@2x.png".to_string(),
+      "icons/app-foreground.png".to_string(),
+      "icons/app-background.png".to_string(),
+      "icons/app-starticon.png".to_string(),
+    ];
+    let resolved = resolve_ohos_icons(&icons, dir.path()).unwrap();
+    assert_eq!(resolved.foreground, icons_dir.join("app-foreground.png"));
+    assert_eq!(resolved.background, Some(icons_dir.join("app-background.png")));
+    assert_eq!(resolved.starticon, icons_dir.join("app-starticon.png"));
+  }
+
+  #[test]
+  fn resolve_ohos_icons_falls_back_to_largest_desktop_png() {
+    let dir = tempfile::tempdir().unwrap();
+    let icons_dir = dir.path().join("icons");
+    create_dir_all(&icons_dir).unwrap();
+    write(icons_dir.join("32x32.png"), fake_png_with_size(32, 32)).unwrap();
+    write(icons_dir.join("128x128.png"), fake_png_with_size(128, 128)).unwrap();
+    write(icons_dir.join("128x128@2x.png"), fake_png_with_size(256, 256)).unwrap();
+    write(icons_dir.join("icon.ico"), b"not-a-png").unwrap();
+
+    let icons = vec![
+      "icons/32x32.png".to_string(),
+      "icons/128x128.png".to_string(),
+      "icons/128x128@2x.png".to_string(),
+      "icons/icon.ico".to_string(),
+    ];
+    let resolved = resolve_ohos_icons(&icons, dir.path()).unwrap();
+    assert_eq!(resolved.foreground, icons_dir.join("128x128@2x.png"));
+    assert_eq!(resolved.background, None);
+    assert_eq!(resolved.starticon, icons_dir.join("128x128@2x.png"));
+
+    let proj = dir.path().join("gen/ohos");
+    create_dir_all(proj.join("entry_desktop")).unwrap();
+    create_dir_all(proj.join("entry_mobile")).unwrap();
+    write_icons_to_entries(&proj, &["entry_mobile", "entry_desktop"], &resolved).unwrap();
+
+    for path in [
+      proj.join("AppScope/resources/base/media/foreground.png"),
+      proj.join("entry_desktop/src/main/resources/base/media/foreground.png"),
+      proj.join("entry_desktop/src/main/resources/base/media/startIcon.png"),
+      proj.join("entry_mobile/src/main/resources/base/media/foreground.png"),
+      proj.join("entry_mobile/src/main/resources/base/media/startIcon.png"),
+    ] {
+      assert_eq!(read_png_dimensions(&path), Some((256, 256)));
+    }
+    for bg_path in [
+      proj.join("AppScope/resources/base/media/background.png"),
+      proj.join("entry_desktop/src/main/resources/base/media/background.png"),
+      proj.join("entry_mobile/src/main/resources/base/media/background.png"),
+    ] {
+      assert_eq!(std::fs::read(&bg_path).unwrap(), FALLBACK_BACKGROUND_PNG);
+    }
+  }
 }
