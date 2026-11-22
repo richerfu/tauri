@@ -13,12 +13,12 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wry = { version = "0.55.1", default-features = false, features = [
+wry = { git = "https://github.com/richerfu/wry", branch = "feat-openharmony", default-features = false, features = [
   "protocol",
   "os-webview",
   "linux-body",
 ] }
-tao = { version = "0.35.3", default-features = false, features = ["rwh_06"] }
+tao = { git = "https://github.com/richerfu/tao", branch = "feat-openharmony", default-features = false, features = ["rwh_06"] }
 tauri-runtime = { version = "2.10.1", path = "../tauri-runtime" }
 tauri-utils = { version = "2.8.3", path = "../tauri-utils" }
 raw-window-handle = "0.6"

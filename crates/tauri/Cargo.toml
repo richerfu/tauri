@@ -86,11 +86,11 @@ cookie = "0.18"
 
 # desktop (exclude ohos)
 [target.'cfg(all(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "windows", target_os = "macos"), not(target_env = "ohos")))'.dependencies]
-muda = { version = "0.19.1", default-features = false, features = [
+muda = { git = "https://github.com/richerfu/muda", branch = "feat-openharmony", default-features = false, features = [
   "serde",
   "gtk",
 ] }
-tray-icon = { version = "0.24.0", default-features = false, features = [
+tray-icon = { git = "https://github.com/richerfu/tray-icon", branch = "feat-openharmony", default-features = false, features = [
   "serde",
 ], optional = true }
 
@@ -152,10 +152,10 @@ rustls = { version = "0.23", default-features = false, features = [
 
 # openharmony
 [target.'cfg(target_env = "ohos")'.dependencies]
-muda = { version = "0.19.1", default-features = false, features = [
+muda = { git = "https://github.com/richerfu/muda", branch = "feat-openharmony", default-features = false, features = [
   "serde",
 ] }
-tray-icon = { version = "0.24.0", default-features = false, features = [
+tray-icon = { git = "https://github.com/richerfu/tray-icon", branch = "feat-openharmony", default-features = false, features = [
   "serde",
 ], optional = true }
 openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability", branch = "codex/complete-platform-capabilities" }

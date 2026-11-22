@@ -1056,6 +1056,7 @@ dependencies = [
 [[package]]
 name = "cargo-mobile2"
 version = "0.22.4"
+source = "git+https://github.com/richerfu/cargo-mobile2?branch=feat-openharmony#a9f23dbf57ceeb1c40b9389ff116ecf0052f8be9"
 dependencies = [
  "colored",
  "core-foundation 0.10.0",
@@ -4793,6 +4794,7 @@ dependencies = [
 [[package]]
 name = "muda"
 version = "0.19.1"
+source = "git+https://github.com/richerfu/muda?branch=feat-openharmony#a8ba5892e483784e9b1b7f5114cee1bb0a25938c"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
@@ -9322,6 +9324,7 @@ dependencies = [
 [[package]]
 name = "tao"
 version = "0.35.3"
+source = "git+https://github.com/richerfu/tao?branch=feat-openharmony#896993d53f7249933f7c59b9bd56d5e79e7c78bb"
 dependencies = [
  "bitflags 2.7.0",
  "block2 0.6.2",
@@ -9357,7 +9360,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "raw-window-handle",
- "tao-macros 0.1.3",
+ "tao-macros 0.1.3 (git+https://github.com/richerfu/tao?branch=feat-openharmony)",
  "unicode-segmentation",
  "url",
  "windows 0.61.1",
@@ -9369,6 +9372,8 @@ dependencies = [
 [[package]]
 name = "tao-macros"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4e16beb8b2ac17db28eab8bca40e62dbfbb34c0fcdc6d9826b11b7b5d047dfd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9378,8 +9383,7 @@ dependencies = [
 [[package]]
 name = "tao-macros"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4e16beb8b2ac17db28eab8bca40e62dbfbb34c0fcdc6d9826b11b7b5d047dfd"
+source = "git+https://github.com/richerfu/tao?branch=feat-openharmony#896993d53f7249933f7c59b9bd56d5e79e7c78bb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10473,6 +10477,7 @@ dependencies = [
 [[package]]
 name = "tray-icon"
 version = "0.24.0"
+source = "git+https://github.com/richerfu/tray-icon?branch=feat-openharmony#a39fde477279c6ac47b3181aa56195a5be180bc6"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
@@ -11895,6 +11900,7 @@ checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
 [[package]]
 name = "wry"
 version = "0.55.1"
+source = "git+https://github.com/richerfu/wry?branch=feat-openharmony#979b860c981d912b24e959d3e528a8316f33fc9e"
 dependencies = [
  "base64 0.22.1",
  "block2 0.6.2",
